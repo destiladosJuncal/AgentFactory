@@ -1,0 +1,741 @@
+<title>AgentFactory</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* ============ tokens ============ */
+  :root{
+    --ink:#0F1520;            /* chrome ground, both themes */
+    --ink-2:#161D2A;
+    --ink-line:#232C3C;
+    --on-ink:#C7Cedb;
+    --on-ink-dim:#7E8899;
+    --on-ink-strong:#F6F8FB;
+
+    --accent:#C6761A;         /* forge amber */
+    --accent-soft:#f4e6d3;
+    --accent-ink:#E7A343;     /* amber on ink */
+
+    --bg:#E6E8EE;             /* backdrop behind the window */
+    --surface:#FCFCFD;
+    --panel:#F1F3F7;
+    --panel-2:#E9ECF2;
+    --border:#E0E3EB;
+    --border-strong:#CDD2DD;
+    --text:#1A202A;
+    --muted:#616A79;
+    --muted-2:#8A93A3;
+
+    --ok:#3E8F65; --ok-bg:#e5f2ea;
+    --run:#3777BE; --run-bg:#e5eef8;
+    --bad:#C13B50; --bad-bg:#f8e6e9;
+
+    --radius:14px;
+    --radius-sm:9px;
+    --shadow:0 24px 60px -22px rgba(15,21,32,.42), 0 4px 14px -8px rgba(15,21,32,.3);
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --display:"Bricolage Grotesque",var(--sans);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#080B11;
+      --surface:#131A24;
+      --panel:#1A212E;
+      --panel-2:#212A39;
+      --border:#28313F;
+      --border-strong:#374254;
+      --text:#E7EAF0;
+      --muted:#96A0B0;
+      --muted-2:#6E7889;
+      --accent:#E7A343;
+      --accent-soft:#3a2f1e;
+      --ok:#54B98A; --ok-bg:#16281f;
+      --run:#5BA0E0; --run-bg:#12233a;
+      --bad:#E5697D; --bad-bg:#2c1820;
+      --shadow:0 24px 70px -20px rgba(0,0,0,.7), 0 2px 10px -6px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#080B11; --surface:#131A24; --panel:#1A212E; --panel-2:#212A39;
+    --border:#28313F; --border-strong:#374254; --text:#E7EAF0; --muted:#96A0B0;
+    --muted-2:#6E7889; --accent:#E7A343; --accent-soft:#3a2f1e;
+    --ok:#54B98A; --ok-bg:#16281f; --run:#5BA0E0; --run-bg:#12233a;
+    --bad:#E5697D; --bad-bg:#2c1820;
+    --shadow:0 24px 70px -20px rgba(0,0,0,.7), 0 2px 10px -6px rgba(0,0,0,.6);
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(198,118,26,.10), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+    display:flex;align-items:center;justify-content:center;
+    padding:28px 20px;
+  }
+  @media (max-width:720px){ body{padding:0} }
+
+  /* ============ window frame ============ */
+  .win{
+    width:min(1180px,100%);
+    height:min(760px,calc(100vh - 56px));
+    background:var(--surface);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    display:grid;
+    grid-template-columns:232px 1fr;
+    overflow:hidden;
+    border:1px solid rgba(255,255,255,.04);
+  }
+  @media (max-width:720px){
+    .win{height:100vh;border-radius:0;grid-template-columns:1fr}
+    .sidebar{display:none}
+  }
+
+  /* ============ sidebar (ink) ============ */
+  .sidebar{
+    background:linear-gradient(180deg,var(--ink),var(--ink-2));
+    color:var(--on-ink);
+    display:flex;flex-direction:column;
+    padding:18px 14px;
+    border-right:1px solid var(--ink-line);
+  }
+  .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 20px}
+  .brand .mark{
+    width:30px;height:30px;border-radius:8px;flex:none;
+    background:conic-gradient(from 210deg, var(--accent-ink), #b9701c 55%, var(--accent-ink));
+    position:relative;box-shadow:0 0 0 1px rgba(231,163,67,.25), 0 6px 16px -6px rgba(231,163,67,.55);
+  }
+  .brand .mark::after{
+    content:"";position:absolute;inset:8px;border-radius:3px;
+    background:var(--ink);
+    clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);
+  }
+  .brand .name{font-family:var(--display);font-weight:700;font-size:17px;color:var(--on-ink-strong);letter-spacing:-.01em}
+  .brand .name small{display:block;font-family:var(--mono);font-weight:400;font-size:10px;color:var(--on-ink-dim);letter-spacing:.08em;margin-top:1px}
+
+  .navlabel{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--on-ink-dim);padding:14px 10px 6px}
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .nav button{
+    all:unset;cursor:pointer;display:flex;align-items:center;gap:11px;
+    padding:9px 11px;border-radius:9px;color:var(--on-ink);font-size:14px;font-weight:500;
+    transition:background .15s,color .15s;
+  }
+  .nav button:hover{background:rgba(255,255,255,.05)}
+  .nav button.active{background:rgba(231,163,67,.14);color:var(--on-ink-strong)}
+  .nav button.active .ic{color:var(--accent-ink)}
+  .nav button:focus-visible{outline:2px solid var(--accent-ink);outline-offset:2px}
+  .ic{width:17px;height:17px;flex:none;color:var(--on-ink-dim);stroke-width:1.8}
+  .nav button .badge{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--bad);color:#fff;border-radius:20px;padding:1px 7px}
+
+  .side-foot{margin-top:auto;padding:12px 10px 4px;border-top:1px solid var(--ink-line)}
+  .vault{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--on-ink)}
+  .vault .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(62,143,101,.18)}
+  .vault small{display:block;color:var(--on-ink-dim);font-size:11px}
+
+  /* ============ main ============ */
+  .main{display:flex;flex-direction:column;min-width:0;background:var(--surface)}
+  .topbar{
+    display:flex;align-items:center;gap:14px;
+    padding:14px 22px;border-bottom:1px solid var(--border);
+    background:var(--surface);
+  }
+  .topbar h1{font-family:var(--display);font-weight:700;font-size:20px;margin:0;letter-spacing:-.015em}
+  .topbar .sub{color:var(--muted);font-size:13px;margin-left:2px}
+  .spacer{flex:1}
+  .pill{
+    display:inline-flex;align-items:center;gap:7px;font-size:12px;font-family:var(--mono);
+    padding:5px 10px;border-radius:20px;border:1px solid var(--border);background:var(--panel);color:var(--muted);
+  }
+  .pill .dot{width:7px;height:7px;border-radius:50%}
+  .dot.on{background:var(--ok)} .dot.warn{background:var(--accent)}
+  .iconbtn{all:unset;cursor:pointer;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:var(--muted);border:1px solid var(--border)}
+  .iconbtn:hover{background:var(--panel);color:var(--text)}
+  .iconbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  .scroll{overflow-y:auto;flex:1;padding:24px 26px 34px}
+  .screen{display:none;animation:fade .25s ease}
+  .screen.show{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){ .screen,.win *{animation:none!important;transition:none!important} }
+
+  /* buttons */
+  .btn{all:unset;cursor:pointer;font-family:var(--sans);font-weight:600;font-size:13.5px;
+    padding:9px 16px;border-radius:10px;display:inline-flex;align-items:center;gap:8px;transition:.15s}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{filter:brightness(1.06)}
+  .btn.ghost{border:1px solid var(--border-strong);color:var(--text)}
+  .btn.ghost:hover{background:var(--panel)}
+  .btn.sm{padding:6px 12px;font-size:12.5px}
+
+  /* status chips */
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:20px;font-family:var(--mono);letter-spacing:.01em}
+  .chip::before{content:"";width:7px;height:7px;border-radius:50%}
+  .chip.ok{background:var(--ok-bg);color:var(--ok)} .chip.ok::before{background:var(--ok)}
+  .chip.run{background:var(--run-bg);color:var(--run)} .chip.run::before{background:var(--run)}
+  .chip.bad{background:var(--bad-bg);color:var(--bad)} .chip.bad::before{background:var(--bad)}
+  .chip.idle{background:var(--panel-2);color:var(--muted)} .chip.idle::before{background:var(--muted-2)}
+
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted-2)}
+  h2.sec{font-family:var(--display);font-weight:700;font-size:22px;margin:2px 0 3px;letter-spacing:-.02em;text-wrap:balance}
+  .lead{color:var(--muted);font-size:14px;max-width:60ch}
+
+  /* ============ dashboard ============ */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0 26px}
+  @media (max-width:900px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 15px}
+  .stat .n{font-family:var(--display);font-weight:700;font-size:26px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .stat .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .stat.alert .n{color:var(--bad)}
+
+  .rowhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .agentlist{display:flex;flex-direction:column;gap:10px}
+  .agent{
+    display:grid;grid-template-columns:1fr auto;gap:6px 18px;align-items:center;
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:15px 17px;cursor:pointer;transition:.15s;
+  }
+  .agent:hover{border-color:var(--border-strong);transform:translateY(-1px);box-shadow:0 8px 22px -16px rgba(15,21,32,.4)}
+  .agent:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .agent .top{display:flex;align-items:center;gap:10px}
+  .agent .top h3{margin:0;font-size:15.5px;font-weight:600}
+  .agent .desc{color:var(--muted);font-size:13px}
+  .agent .meta{grid-column:1/2;display:flex;gap:16px;flex-wrap:wrap;color:var(--muted-2);font-size:12px;font-family:var(--mono);margin-top:2px}
+  .agent .meta b{color:var(--muted);font-weight:500}
+  .agent .right{grid-row:1/3;grid-column:2;display:flex;flex-direction:column;align-items:flex-end;gap:8px;justify-self:end}
+  .agent .change{font-size:12px;color:var(--muted);max-width:24ch;text-align:right}
+
+  /* ============ create flow ============ */
+  .stepper{display:flex;gap:6px;margin:18px 0 22px;flex-wrap:wrap}
+  .step{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted-2);padding:6px 12px;border-radius:20px;border:1px solid var(--border)}
+  .step .num{font-family:var(--mono);font-size:11px;width:19px;height:19px;border-radius:50%;display:grid;place-items:center;background:var(--panel-2);color:var(--muted)}
+  .step.active{color:var(--text);border-color:var(--accent);background:var(--accent-soft)}
+  .step.active .num{background:var(--accent);color:#fff}
+  .step.done .num{background:var(--ok);color:#fff}
+  .step.done{color:var(--muted)}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px}
+  .flowbox{max-width:760px}
+  textarea.prompt,input.txt{
+    width:100%;font-family:var(--sans);font-size:15px;color:var(--text);
+    background:var(--panel);border:1px solid var(--border-strong);border-radius:11px;
+    padding:14px 15px;resize:vertical;
+  }
+  textarea.prompt{min-height:96px}
+  textarea.prompt:focus,input.txt:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  .hint{font-size:12.5px;color:var(--muted-2);margin-top:8px}
+  .flowfoot{display:flex;gap:10px;align-items:center;margin-top:20px}
+
+  .plan{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:6px 0 4px}
+  .plan li{margin:0 0 11px;padding-left:6px}
+  .plan li b{font-weight:600}
+  .plan .k{font-family:var(--mono);font-size:12.5px;background:var(--panel-2);padding:1px 7px;border-radius:5px;color:var(--accent)}
+  .callout{display:flex;gap:11px;background:var(--run-bg);border:1px solid color-mix(in srgb,var(--run) 26%,transparent);border-radius:11px;padding:13px 15px;font-size:13px;color:var(--text);margin-top:16px}
+  .callout svg{color:var(--run);flex:none;margin-top:1px}
+
+  /* record / capture */
+  .browserframe{border:1px solid var(--border-strong);border-radius:12px;overflow:hidden;background:var(--panel)}
+  .bchrome{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--panel-2);border-bottom:1px solid var(--border)}
+  .tl{display:flex;gap:6px}.tl i{width:11px;height:11px;border-radius:50%;display:block}
+  .tl i:nth-child(1){background:#e0655f}.tl i:nth-child(2){background:#e6b038}.tl i:nth-child(3){background:#4fb06a}
+  .burl{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:7px;font-family:var(--mono);font-size:12px;padding:5px 10px;color:var(--muted);display:flex;align-items:center;gap:7px}
+  .rec{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;color:var(--bad);font-weight:500}
+  .rec .blink{width:8px;height:8px;border-radius:50%;background:var(--bad);animation:blink 1.1s infinite}
+  @keyframes blink{50%{opacity:.25}}
+  .bbody{padding:26px;display:grid;place-items:center;text-align:center;min-height:190px;gap:6px}
+  .bbody .big{font-family:var(--display);font-weight:700;font-size:18px}
+  .capgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+  .capstat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .capstat .n{font-family:var(--display);font-weight:700;font-size:24px;font-variant-numeric:tabular-nums}
+  .capstat .l{font-size:11.5px;color:var(--muted);font-family:var(--mono);letter-spacing:.03em}
+  .domlist{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}
+  .dom{font-family:var(--mono);font-size:12px;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;padding:3px 9px;color:var(--muted)}
+  .dom.allow{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 34%,transparent);background:var(--ok-bg)}
+
+  /* ============ agent detail ============ */
+  .detailgrid{display:grid;grid-template-columns:1.55fr 1fr;gap:18px;margin-top:20px}
+  @media (max-width:900px){.detailgrid{grid-template-columns:1fr}}
+  .panelcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
+  .panelcard h4{margin:0 0 14px;font-size:13px;font-family:var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .runline{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px dashed var(--border)}
+  .runline:last-child{border-bottom:0}
+  .runline .when{font-family:var(--mono);font-size:12px;color:var(--muted);min-width:104px}
+  .runline .what{font-size:13px;flex:1}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px dashed var(--border);font-size:13px}
+  .kv:last-child{border-bottom:0}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-family:var(--mono);font-size:12.5px;text-align:right}
+  .cred{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12.5px;padding:7px 0}
+  .cred .lock{color:var(--muted-2)}
+  .redact{background:var(--panel-2);border-radius:5px;padding:1px 8px;color:var(--muted-2);letter-spacing:.1em}
+
+  .logbox{background:var(--ink);color:var(--on-ink);border-radius:11px;font-family:var(--mono);font-size:12px;line-height:1.65;padding:14px 16px;max-height:230px;overflow:auto;border:1px solid var(--ink-line)}
+  .logbox .t{color:var(--on-ink-dim)}
+  .logbox .g{color:#6fce9a}.logbox .a{color:var(--accent-ink)}.logbox .r{color:#e88}
+  .logtoggle{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+
+  /* settings */
+  .setrow{display:flex;align-items:flex-start;gap:14px;justify-content:space-between;padding:16px 0;border-bottom:1px solid var(--border)}
+  .setrow:last-child{border-bottom:0}
+  .setrow .txtblk{max-width:52ch}
+  .setrow h4{margin:0 0 3px;font-size:14.5px}
+  .setrow p{margin:0;color:var(--muted);font-size:13px}
+  .switch{width:42px;height:25px;border-radius:20px;background:var(--panel-2);border:1px solid var(--border-strong);position:relative;cursor:pointer;flex:none;transition:.18s}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:.18s}
+  .switch.on{background:var(--accent);border-color:var(--accent)}
+  .switch.on::after{left:19px}
+
+  .banner{display:flex;align-items:center;gap:13px;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 32%,transparent);border-radius:11px;padding:12px 15px;margin-bottom:18px}
+  .banner .t{flex:1;font-size:13px}
+  .banner b{color:var(--accent)}
+  .backlink{all:unset;cursor:pointer;color:var(--muted);font-size:13px;display:inline-flex;align-items:center;gap:6px;margin-bottom:6px}
+  .backlink:hover{color:var(--text)}
+</style>
+
+<div class="win">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"></div>
+      <div class="name">AgentFactory<small>v0.1 · local</small></div>
+    </div>
+
+    <div class="navlabel">Taller</div>
+    <nav class="nav" id="nav">
+      <button data-go="dashboard" class="active">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Mis agentes
+      </button>
+      <button data-go="create">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+        Crear agente
+      </button>
+      <button data-go="activity">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+        Actividad
+        <span class="badge">1</span>
+      </button>
+    </nav>
+
+    <div class="navlabel">Sistema</div>
+    <nav class="nav">
+      <button data-go="settings">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+        Ajustes
+      </button>
+    </nav>
+
+    <div class="side-foot">
+      <div class="vault">
+        <span class="dot"></span>
+        <div>Bóveda desbloqueada<small>Claves cifradas · llavero del sistema</small></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <div class="main">
+    <div class="topbar">
+      <h1 id="ttl">Mis agentes</h1>
+      <span class="sub" id="sub">3 agentes · 2 activos</span>
+      <span class="spacer"></span>
+      <span class="pill"><span class="dot on"></span>deepseek-chat</span>
+      <button class="iconbtn" id="theme" title="Cambiar tema" aria-label="Cambiar tema">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+
+    <div class="scroll">
+
+      <!-- ===== DASHBOARD ===== -->
+      <section class="screen show" data-screen="dashboard">
+        <div class="banner">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8"><path d="M12 2 3 7v6c0 5 3.8 8 9 9 5.2-1 9-4 9-9V7z"/></svg>
+          <div class="t"><b>Configuración inicial pendiente.</b> Falta descargar el navegador de captura (~90 MB) y elegir cómo se guardan tus claves.</div>
+          <button class="btn primary sm" data-go="settings">Terminar setup</button>
+        </div>
+
+        <div class="eyebrow">Resumen</div>
+        <h2 class="sec">Buenas, Rodrigo</h2>
+        <p class="lead">Tus agentes corren solos en esta máquina, según su agenda. Acá ves cómo les fue la última vez y qué sigue.</p>
+
+        <div class="stats">
+          <div class="stat"><div class="n">3</div><div class="l">Agentes creados</div></div>
+          <div class="stat"><div class="n">2</div><div class="l">Activos ahora</div></div>
+          <div class="stat alert"><div class="n">1</div><div class="l">Con falla</div></div>
+          <div class="stat"><div class="n">09:00</div><div class="l">Próxima corrida</div></div>
+        </div>
+
+        <div class="rowhead">
+          <div class="eyebrow">Agentes</div>
+          <button class="btn ghost sm" data-go="create">＋ Nuevo agente</button>
+        </div>
+
+        <div class="agentlist" id="agentlist">
+          <div class="agent" tabindex="0" data-go="agent">
+            <div class="top"><span class="chip ok">ok</span><h3>Cobros proveedores</h3></div>
+            <div class="desc">Entra al portal, revisa pedidos nuevos y te avisa por mail.</div>
+            <div class="meta"><span><b>Última:</b> hoy 09:00</span><span><b>Próxima:</b> mañana 09:00</span><span><b>Corridas:</b> 24</span></div>
+            <div class="right"><span class="change">Encontró 2 pedidos nuevos</span><span class="chip idle">diario</span></div>
+          </div>
+
+          <div class="agent" tabindex="0" data-go="agent">
+            <div class="top"><span class="chip bad">falló</span><h3>Scraping precios competencia</h3></div>
+            <div class="desc">Recorre 3 catálogos y arma una planilla comparativa.</div>
+            <div class="meta"><span><b>Última:</b> hoy 06:30</span><span><b>Próxima:</b> en pausa</span><span><b>Corridas:</b> 51</span></div>
+            <div class="right"><span class="change" style="color:var(--bad)">Cambió el selector de precio</span><span class="chip idle">cada 6 h</span></div>
+          </div>
+
+          <div class="agent" tabindex="0" data-go="agent">
+            <div class="top"><span class="chip run">corriendo</span><h3>Reporte nmap semanal</h3></div>
+            <div class="desc">Corre el escaneo, lee la salida y arma un PDF resumen.</div>
+            <div class="meta"><span><b>Inició:</b> hace 40 s</span><span><b>Próxima:</b> lun 08:00</span><span><b>Corridas:</b> 7</span></div>
+            <div class="right"><span class="change">Escaneando 12/18 hosts…</span><span class="chip idle">semanal</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== CREATE FLOW ===== -->
+      <section class="screen" data-screen="create">
+        <div class="eyebrow">Nuevo agente</div>
+        <h2 class="sec">¿Qué querés que haga?</h2>
+
+        <div class="stepper" id="stepper">
+          <div class="step active" data-s="1"><span class="num">1</span> Describir</div>
+          <div class="step" data-s="2"><span class="num">2</span> Revisar plan</div>
+          <div class="step" data-s="3"><span class="num">3</span> Grabar flujo</div>
+          <div class="step" data-s="4"><span class="num">4</span> Agendar</div>
+        </div>
+
+        <!-- step 1 -->
+        <div class="flowbox cstep" data-cstep="1">
+          <div class="card">
+            <label for="pr" style="font-weight:600;font-size:14px">Contá la tarea en tus palabras</label>
+            <p class="hint" style="margin:4px 0 12px">No hace falta que sepas de programación. Escribilo como si se lo pidieras a un asistente.</p>
+            <textarea class="prompt" id="pr">Todas las mañanas entrá al portal de proveedores, fijate si hay pedidos nuevos desde ayer, y si hay, mandame un mail con la lista.</textarea>
+            <div class="hint">💡 Después vas a poder <b>probarlo</b> y ver un navegador real haciéndolo, antes de que quede activo.</div>
+          </div>
+          <div class="flowfoot">
+            <button class="btn primary" data-next="2">Generar plan →</button>
+            <span class="hint">El plan lo escribe el agente, en español, para que lo revises.</span>
+          </div>
+        </div>
+
+        <!-- step 2 -->
+        <div class="flowbox cstep" data-cstep="2" hidden>
+          <div class="card">
+            <div class="eyebrow" style="margin-bottom:10px">Plan propuesto</div>
+            <ol class="plan">
+              <li><b>Abrir</b> <span class="k">portal-proveedores.com</span> con la sesión que ya guardaste.</li>
+              <li><b>Leer</b> la tabla de pedidos y quedarme con los que tengan fecha de hoy.</li>
+              <li><b>Comparar</b> contra lo que ya te avisé antes, para no repetir. <span class="k">estado.json</span></li>
+              <li><b>Si hay pedidos nuevos</b>, armar un mail y enviártelo. <span class="k">acción · pide confirmación la 1.ª vez</span></li>
+            </ol>
+            <div class="callout">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+              <div>Este agente solo va a entrar a <b>portal-proveedores.com</b> y a tu correo. No puede navegar a otros sitios sin que lo autorices.</div>
+            </div>
+          </div>
+          <div class="flowfoot">
+            <button class="btn primary" data-next="3">Grabar el flujo →</button>
+            <button class="btn ghost" data-next="1">← Ajustar</button>
+            <span class="hint">¿Ves algo raro? Volvé y reescribí la tarea.</span>
+          </div>
+        </div>
+
+        <!-- step 3 : record -->
+        <div class="flowbox cstep" data-cstep="3" hidden>
+          <p class="lead" style="margin-bottom:14px">Se abre un <b>navegador dedicado</b> (aparte del tuyo). Hacé la tarea una vez, a mano: AgentFactory graba los pasos y aprende el flujo. Cerralo cuando termines.</p>
+          <div class="browserframe">
+            <div class="bchrome">
+              <div class="tl"><i></i><i></i><i></i></div>
+              <div class="burl">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+                portal-proveedores.com/pedidos
+              </div>
+              <span class="rec"><span class="blink"></span>GRABANDO</span>
+            </div>
+            <div class="bbody">
+              <div class="big">🖐️ Navegador de captura abierto</div>
+              <div class="hint" style="max-width:34ch">Hacé login y andá hasta la pantalla de pedidos. Estamos escuchando el tráfico.</div>
+            </div>
+          </div>
+
+          <div class="capgrid">
+            <div class="capstat"><div class="n" id="cReq">0</div><div class="l">requests</div></div>
+            <div class="capstat"><div class="n" id="cAct">0</div><div class="l">pasos detectados</div></div>
+            <div class="capstat"><div class="n" id="cSec">0</div><div class="l">secretos ocultados</div></div>
+          </div>
+          <div class="hint" style="margin-top:12px">Dominios vistos (pasan a la lista permitida del agente):</div>
+          <div class="domlist" id="doms"><span class="dom">esperando…</span></div>
+
+          <div class="flowfoot">
+            <button class="btn primary" data-next="4" id="recDone" disabled>Terminé, ya lo hice →</button>
+            <span class="hint" id="recHint">Grabando… hacé la tarea en el navegador que se abrió.</span>
+          </div>
+        </div>
+
+        <!-- step 4 : schedule -->
+        <div class="flowbox cstep" data-cstep="4" hidden>
+          <div class="card">
+            <div class="eyebrow" style="margin-bottom:12px">Casi listo — ¿cada cuánto?</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px" id="freq">
+              <button class="btn ghost sm freqb active">Todos los días</button>
+              <button class="btn ghost sm freqb">Cada 6 horas</button>
+              <button class="btn ghost sm freqb">Solo cuando yo lo diga</button>
+            </div>
+            <label class="hint" for="hh">Hora</label>
+            <input class="txt" id="hh" value="09:00" style="max-width:140px;font-family:var(--mono)">
+            <div class="callout" style="background:var(--ok-bg);border-color:color-mix(in srgb,var(--ok) 28%,transparent)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="1.8"><path d="M20 6 9 17l-5-5"/></svg>
+              <div>Se agenda con el <b>programador del sistema</b>, así corre aunque AgentFactory esté cerrado. La <b>primera corrida la vas a ver</b> con el navegador visible.</div>
+            </div>
+          </div>
+          <div class="flowfoot">
+            <button class="btn primary" data-go="dashboard" id="finish">✓ Crear y probar ahora</button>
+            <button class="btn ghost" data-next="3">← Volver</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== AGENT DETAIL ===== -->
+      <section class="screen" data-screen="agent">
+        <button class="backlink" data-go="dashboard">← Mis agentes</button>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <h2 class="sec" style="margin:0">Cobros proveedores</h2>
+          <span class="chip ok">ok</span>
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn ghost sm">▶ Probar ahora</button>
+          <button class="btn ghost sm">Pausar</button>
+        </div>
+        <p class="lead" style="margin-top:8px">Entra al portal, revisa pedidos nuevos desde ayer y te avisa por mail. Corre todos los días 09:00.</p>
+
+        <div class="detailgrid">
+          <div>
+            <div class="panelcard">
+              <h4>Historial de corridas</h4>
+              <div class="runline"><span class="when">hoy 09:00</span><span class="chip ok">ok</span><span class="what">2 pedidos nuevos → mail enviado</span></div>
+              <div class="runline"><span class="when">ayer 09:00</span><span class="chip ok">ok</span><span class="what">Sin novedades</span></div>
+              <div class="runline"><span class="when">2 días 09:00</span><span class="chip ok">ok</span><span class="what">1 pedido nuevo → mail enviado</span></div>
+              <div class="runline"><span class="when">3 días 09:00</span><span class="chip bad">reintento</span><span class="what">Timeout de login, resuelto al 2.º intento</span></div>
+            </div>
+
+            <div class="panelcard" style="margin-top:16px">
+              <div class="logtoggle">
+                <h4 style="margin:0">Log técnico · corrida de hoy</h4>
+                <button class="btn ghost sm" id="logbtn">Ocultar</button>
+              </div>
+              <div class="logbox" id="logbox">
+<span class="t">09:00:01</span> abriendo navegador (headless) · perfil <span class="a">cobros</span>
+<span class="t">09:00:03</span> sesión restaurada desde bóveda <span class="g">✓</span>
+<span class="t">09:00:04</span> GET /pedidos → 200 · 14 filas
+<span class="t">09:00:04</span> dedupe contra estado.json · 12 ya vistos
+<span class="t">09:00:05</span> <span class="a">2 pedidos nuevos</span> #4821 #4822
+<span class="t">09:00:06</span> acción: enviar_mail → destinatario <span class="redact">‹cred:mail_rodrigo›</span>
+<span class="t">09:00:07</span> mail enviado <span class="g">✓</span> · estado.json actualizado
+<span class="t">09:00:07</span> screenshot guardado · run/2026-09-01T0900
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="panelcard">
+              <h4>Configuración</h4>
+              <div class="kv"><span class="k">Agenda</span><span class="v">diario · 09:00</span></div>
+              <div class="kv"><span class="k">Programador</span><span class="v">launchd (sistema)</span></div>
+              <div class="kv"><span class="k">Entorno</span><span class="v">venv propio · 6 deps</span></div>
+              <div class="kv"><span class="k">Estado entre corridas</span><span class="v">estado.json · 12 IDs</span></div>
+            </div>
+
+            <div class="panelcard" style="margin-top:16px">
+              <h4>Dominios permitidos</h4>
+              <div class="domlist">
+                <span class="dom allow">portal-proveedores.com</span>
+                <span class="dom allow">mail.google.com</span>
+              </div>
+              <p class="hint" style="margin:12px 0 0">Fuera de esta lista, el agente no navega.</p>
+            </div>
+
+            <div class="panelcard" style="margin-top:16px">
+              <h4>Credenciales</h4>
+              <div class="cred"><svg class="lock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> portal_proveedores <span class="redact">••••••••</span></div>
+              <div class="cred"><svg class="lock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> mail_rodrigo <span class="redact">••••••••</span></div>
+              <p class="hint" style="margin:12px 0 0">Guardadas cifradas. El modelo nunca las ve: trabaja con el <b>nombre</b>, no con el valor.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== ACTIVITY ===== -->
+      <section class="screen" data-screen="activity">
+        <div class="eyebrow">Actividad</div>
+        <h2 class="sec">Todo lo que pasó</h2>
+        <p class="lead">Cada corrida de cada agente, en orden. Para auditar sin abrir uno por uno.</p>
+        <div class="panelcard" style="margin-top:18px">
+          <div class="runline"><span class="when">hoy 09:00</span><span class="chip ok">ok</span><span class="what"><b>Cobros proveedores</b> · 2 pedidos nuevos → mail</span></div>
+          <div class="runline"><span class="when">hoy 06:30</span><span class="chip bad">falló</span><span class="what"><b>Scraping precios</b> · el selector de precio dejó de existir <button class="btn ghost sm" style="margin-left:8px">Reparar solo</button></span></div>
+          <div class="runline"><span class="when">hoy 00:00</span><span class="chip ok">ok</span><span class="what"><b>Cobros proveedores</b> · sin novedades</span></div>
+          <div class="runline"><span class="when">ayer 08:00</span><span class="chip ok">ok</span><span class="what"><b>Reporte nmap</b> · PDF generado, 18 hosts</span></div>
+          <div class="runline"><span class="when">ayer 09:00</span><span class="chip ok">ok</span><span class="what"><b>Cobros proveedores</b> · sin novedades</span></div>
+        </div>
+      </section>
+
+      <!-- ===== SETTINGS ===== -->
+      <section class="screen" data-screen="settings">
+        <div class="eyebrow">Ajustes</div>
+        <h2 class="sec">Configuración</h2>
+        <p class="lead">Lo mínimo para que todo funcione solo. Elegí una vez y olvidate.</p>
+
+        <div class="card" style="margin-top:18px">
+          <div class="setrow">
+            <div class="txtblk">
+              <h4>Navegador de captura</h4>
+              <p>Se descarga una sola vez (~90 MB) y lo usan todos los agentes. Necesita internet en este paso.</p>
+            </div>
+            <button class="btn primary sm" id="dl">Descargar ahora</button>
+          </div>
+
+          <div class="setrow">
+            <div class="txtblk">
+              <h4>Cómo se guardan tus claves</h4>
+              <p>El <b>llavero del sistema</b> permite que los agentes corran solos de madrugada. La <b>contraseña maestra</b> es más segura pero los agentes solo corren con la app abierta.</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+              <button class="btn primary sm segb active">Llavero</button>
+              <button class="btn ghost sm segb">Contraseña</button>
+            </div>
+          </div>
+
+          <div class="setrow">
+            <div class="txtblk">
+              <h4>Certificado de captura</h4>
+              <p>Se genera solo, cifrado, la primera vez. No toca el resto del sistema y no te va a pedir nada.</p>
+            </div>
+            <span class="chip ok">generado</span>
+          </div>
+
+          <div class="setrow">
+            <div class="txtblk">
+              <h4>Ver primera corrida de cada agente</h4>
+              <p>La primera vez, abre el navegador visible para que veas qué hace antes de dejarlo solo.</p>
+            </div>
+            <div class="switch on" role="switch" aria-checked="true" tabindex="0"></div>
+          </div>
+
+          <div class="setrow">
+            <div class="txtblk">
+              <h4>Confirmar acciones que no se pueden deshacer</h4>
+              <p>Enviar, publicar, borrar o pagar: te pregunta la primera vez por cada sitio nuevo.</p>
+            </div>
+            <div class="switch on" role="switch" aria-checked="true" tabindex="0"></div>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /scroll -->
+  </div><!-- /main -->
+</div><!-- /win -->
+
+<script>
+(function(){
+  const titles={
+    dashboard:["Mis agentes","3 agentes · 2 activos"],
+    create:["Crear agente","Guiado, sin escribir código"],
+    agent:["Cobros proveedores","Agente · diario 09:00"],
+    activity:["Actividad","Últimas corridas"],
+    settings:["Ajustes","Configuración local"]
+  };
+  const screens=document.querySelectorAll('.screen');
+  const navbtns=document.querySelectorAll('#nav button');
+
+  function go(name){
+    screens.forEach(s=>s.classList.toggle('show', s.dataset.screen===name));
+    navbtns.forEach(b=>b.classList.toggle('active', b.dataset.go===name));
+    const t=titles[name]||titles.dashboard;
+    document.getElementById('ttl').textContent=t[0];
+    document.getElementById('sub').textContent=t[1];
+    document.querySelector('.scroll').scrollTop=0;
+    if(name==='create') resetFlow();
+  }
+  document.querySelectorAll('[data-go]').forEach(el=>{
+    el.addEventListener('click',()=>go(el.dataset.go));
+    if(el.hasAttribute('tabindex')) el.addEventListener('keydown',e=>{if(e.key==='Enter')go(el.dataset.go);});
+  });
+
+  /* ---- create stepper ---- */
+  let capTimer=null;
+  function setStep(n){
+    document.querySelectorAll('#stepper .step').forEach(s=>{
+      const i=+s.dataset.s;
+      s.classList.toggle('active',i===n);
+      s.classList.toggle('done',i<n);
+    });
+    document.querySelectorAll('.cstep').forEach(c=>c.hidden=(+c.dataset.cstep!==n));
+    if(capTimer){clearInterval(capTimer);capTimer=null;}
+    if(n===3) runCapture();
+  }
+  function resetFlow(){ setStep(1); }
+  document.querySelectorAll('[data-next]').forEach(b=>b.addEventListener('click',()=>setStep(+b.dataset.next)));
+
+  /* ---- fake capture animation ---- */
+  function runCapture(){
+    const req=document.getElementById('cReq'),act=document.getElementById('cAct'),sec=document.getElementById('cSec');
+    const doms=document.getElementById('doms'),done=document.getElementById('recDone'),hint=document.getElementById('recHint');
+    let r=0,a=0,s=0;const found=['portal-proveedores.com','cdn.portal-prov.com','auth.portal-prov.com'];let di=0;
+    doms.innerHTML='<span class="dom">esperando…</span>';done.disabled=true;
+    const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
+    if(reduce){ req.textContent=38;act.textContent=6;sec.textContent=3;
+      doms.innerHTML=found.map((d,i)=>`<span class="dom${i===0?' allow':''}">${d}</span>`).join('');
+      done.disabled=false;hint.textContent='Listo. Revisá y agendá.';return; }
+    capTimer=setInterval(()=>{
+      r+=Math.floor(Math.random()*4)+1; req.textContent=r;
+      if(r>6&&a<6&&Math.random()>.5){a++;act.textContent=a;}
+      if(r>10&&s<3&&Math.random()>.6){s++;sec.textContent=s;}
+      if(di<found.length&&r>di*11+4){
+        if(di===0)doms.innerHTML='';
+        const el=document.createElement('span');el.className='dom'+(di===0?' allow':'');el.textContent=found[di];doms.appendChild(el);di++;
+      }
+      if(r>=38){clearInterval(capTimer);capTimer=null;req.textContent=38;
+        done.disabled=false;hint.textContent='Detectamos el flujo. Cuando cierres el navegador, seguí.';}
+    },260);
+  }
+
+  /* ---- misc toggles ---- */
+  document.getElementById('logbtn').addEventListener('click',e=>{
+    const box=document.getElementById('logbox');const h=box.style.display==='none';
+    box.style.display=h?'block':'none';e.target.textContent=h?'Ocultar':'Mostrar';
+  });
+  document.querySelectorAll('.freqb').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('.freqb').forEach(x=>x.classList.remove('active'));b.classList.add('active');
+  }));
+  document.querySelectorAll('.segb').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('.segb').forEach(x=>{x.classList.remove('active');x.classList.remove('primary');x.classList.add('ghost');});
+    b.classList.add('active','primary');b.classList.remove('ghost');
+  }));
+  document.querySelectorAll('.switch').forEach(sw=>{
+    const t=()=>{const on=sw.classList.toggle('on');sw.setAttribute('aria-checked',on);};
+    sw.addEventListener('click',t);
+    sw.addEventListener('keydown',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();t();}});
+  });
+  document.getElementById('dl').addEventListener('click',e=>{
+    let p=0;e.target.disabled=true;
+    const iv=setInterval(()=>{p+=Math.floor(Math.random()*18)+6;if(p>=100){p=100;clearInterval(iv);e.target.textContent='✓ Descargado';e.target.classList.remove('primary');e.target.classList.add('ghost');}else{e.target.textContent='Descargando '+p+'%';}},300);
+  });
+
+  /* ---- theme toggle ---- */
+  document.getElementById('theme').addEventListener('click',()=>{
+    const root=document.documentElement;
+    const cur=root.getAttribute('data-theme');
+    const dark=cur?cur==='dark':matchMedia('(prefers-color-scheme:dark)').matches;
+    root.setAttribute('data-theme',dark?'light':'dark');
+  });
+})();
+</script>

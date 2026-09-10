@@ -1,0 +1,30 @@
+# Finales de línea. Esto no es cosmético en este proyecto: se edita desde
+# Windows y desde macOS, y hay dos arrancadores que el sistema operativo
+# ejecuta directamente.
+#
+# Sin este archivo, un clone en Windows con core.autocrlf=true le mete CRLF a
+# INICIAR.command, y un script bash con CRLF no arranca en macOS: falla con
+# "bad interpreter: /bin/bash^M", que no dice en ningún momento que el problema
+# son los finales de línea.
+
+# Por defecto: git normaliza a LF en el repositorio.
+* text=auto eol=lf
+
+# Los .bat los interpreta cmd.exe, que espera CRLF. Con LF hay casos borde
+# conocidos en bloques y en `goto :eof` dentro de subrutinas.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Los que ejecuta un shell POSIX: LF sí o sí.
+*.command text eol=lf
+*.sh       text eol=lf
+
+# Binarios: que git no los toque nunca.
+*.png  binary
+*.ico  binary
+*.icns binary
+*.jpg  binary
+*.gz   binary
+*.zip  binary
+*.db   binary
+*.p12  binary

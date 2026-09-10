@@ -1,0 +1,19 @@
+{
+  "descripcion": "creame un agente que me sirva para pentesting, tenes que dotarlo de herramietnas como ffuf, curl, nmap, e iterar sobre estas herramientas para encontrar una vector explotable",
+  "objetivos": {
+    "funcionalidad": {
+      "tests_pasados_min": 8,
+      "tests_totales": 10
+    },
+    "eficiencia": {
+      "tiempo_maximo_ms": 100,
+      "memoria_maxima_mb": 50
+    },
+    "calidad": {
+      "puntuacion_minima": 0.7
+    }
+  },
+  "umbral_global": 0.75,
+  "max_iteraciones": 100,
+  "lenguaje": "python"
+}

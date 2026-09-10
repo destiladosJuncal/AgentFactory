@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "🔧 Configurar API key de DeepSeek"
+echo ""
+read -p "Ingresa tu API key de DeepSeek: " API_KEY
+if [ -n "$API_KEY" ]; then
+    cd /Applications/AgenteDeepSeek
+    sed -i '' "s/DEEPSEEK_API_KEY=.*/DEEPSEEK_API_KEY=$API_KEY/" .env
+    echo "✅ API key configurada correctamente"
+else
+    echo "❌ No se ingresó API key"
+fi

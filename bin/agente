@@ -1,0 +1,4 @@
+#!/bin/bash
+cd /Applications/AgenteDeepSeek
+source venv/bin/activate
+python main.py "$@"

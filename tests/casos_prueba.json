@@ -1,0 +1,32 @@
+[
+  {
+    "nombre": "ordenar_lista_normal",
+    "funcion": "ordenar",
+    "args": [[3, 1, 4, 1, 5, 9, 2, 6]],
+    "esperado": [1, 1, 2, 3, 4, 5, 6, 9]
+  },
+  {
+    "nombre": "ordenar_lista_vacia",
+    "funcion": "ordenar",
+    "args": [[]],
+    "esperado": []
+  },
+  {
+    "nombre": "ordenar_lista_duplicados",
+    "funcion": "ordenar",
+    "args": [[5, 5, 5, 1, 1]],
+    "esperado": [1, 1, 5, 5, 5]
+  },
+  {
+    "nombre": "ordenar_lista_negativos",
+    "funcion": "ordenar",
+    "args": [[-3, 5, -1, 0, 2]],
+    "esperado": [-3, -1, 0, 2, 5]
+  },
+  {
+    "nombre": "ordenar_lista_un_elemento",
+    "funcion": "ordenar",
+    "args": [[42]],
+    "esperado": [42]
+  }
+]

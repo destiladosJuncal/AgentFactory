@@ -1,0 +1,44 @@
+# --- Lo que crea el arranque portable, nunca se versiona --------------------
+# El intérprete que baja INICIAR.bat / INICIAR.command (~140 MB).
+runtime/
+# El entorno virtual, cuando se usa un Python del sistema.
+venv/
+.venv/
+
+# Sello con el hash de requirements.txt del último pip install. Vive adentro de
+# runtime/ o venv/ justamente para no viajar; esta línea cubre copias viejas que
+# lo tuvieran en la raíz. Si se versiona, una máquina nueva cree que ya tiene
+# las dependencias puestas, saltea pip y muere en la verificación.
+.requisitos-instalados
+
+# --- Empaquetado ------------------------------------------------------------
+dist/
+build/
+build_pyi/
+*.spec
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# --- Datos y credenciales ---------------------------------------------------
+# Normalmente los datos viven fuera de la carpeta del código (AGENTE_DATOS),
+# pero si alguien corre la app con AGENTE_DATOS apuntando acá, esto evita el
+# accidente.
+.env
+.env.local
+_conversaciones/
+_biblioteca/
+_versiones/
+_proxy/
+_tareas/
+_logs/
+_paquetes/
+_papelera/
+
+# --- Sistema ----------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini

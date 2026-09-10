@@ -97,23 +97,16 @@ def notificar(titulo: str, mensaje: str):
         pass
 
 
-def main():
-    tarea = next((t for t in programador.cargar() if t.get("id") == args.tarea), None)
-    if tarea is None:
-        print(f"No existe la tarea {args.tarea}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"▶ Tarea «{tarea['titulo']}» — {programador.describir(tarea)}", flush=True)
-
+def _conversacion_de(tarea):
     gestor = GestorConversaciones()
-    conv_dir = gestor.cargar_conversacion(tarea["conversacion"])
-    if conv_dir is None:
-        # Si la borraron, la recreamos con el mismo nombre para no perder la tarea.
-        conv_dir = gestor.crear_conversacion(tarea["conversacion"])
+    conv_dir = gestor.cargar_conversacion(tarea["conversacion"]) \
+        or gestor.crear_conversacion(tarea["conversacion"])
+    return ConversacionChat(conv_dir)
 
-    conversacion = ConversacionChat(conv_dir)
 
-    # Marca de encabezado para distinguir en el historial que esto lo disparó el cron.
+def correr_agente(tarea):
+    """Tarea-agente: cada corrida invoca al LLM (para lo que necesita juicio)."""
+    conversacion = _conversacion_de(tarea)
     prompt = f"[Tarea programada · {programador.describir(tarea)}]\n\n{tarea['prompt']}"
     try:
         respuesta = conversacion.enviar(prompt)
@@ -122,12 +115,75 @@ def main():
         notificar(tarea["titulo"], f"Falló: {e}")
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(1)
-
     programador.registrar_corrida(tarea["id"], ok=True, respuesta=respuesta)
-    resumen = (respuesta or "").strip().splitlines()
-    primera = next((l for l in resumen if l.strip()), "Listo")
+    primera = next((l for l in (respuesta or "").splitlines() if l.strip()), "Listo")
     notificar(tarea["titulo"], primera[:200])
     print("✅ Listo. Respuesta guardada en la conversación.", flush=True)
+
+
+def correr_script(tarea):
+    """Tarea-script: corre el workflow DETERMINÍSTICO. El LLM solo entra si el
+    script falla o pide escalar (imprime una línea 'ESCALAR: <motivo>')."""
+    import subprocess
+    from core import interprete
+    script = tarea["script"]
+    try:
+        r = subprocess.run([interprete.interprete(), script], capture_output=True,
+                           text=True, timeout=300, cwd=str(APP_DIR), env=os.environ.copy())
+        salida, err, rc = (r.stdout or "").strip(), (r.stderr or "").strip(), r.returncode
+    except Exception as e:
+        salida, err, rc = "", f"no pude ejecutar el script: {e}", 1
+
+    pidio_escalar = any(l.strip().startswith("ESCALAR:") for l in salida.splitlines())
+    if rc == 0 and not pidio_escalar:
+        programador.registrar_corrida(tarea["id"], ok=True, respuesta=salida or "(sin salida)")
+        notificar(tarea["titulo"], (salida.splitlines() or ["Listo"])[0][:200])
+        print("✅ Script OK", flush=True)
+        return
+
+    # --- Fallback: el script no pudo determinar el próximo paso → LLM ---
+    motivo = next((l.split("ESCALAR:", 1)[1].strip()
+                   for l in salida.splitlines() if l.strip().startswith("ESCALAR:")),
+                  err or f"el script salió con código {rc}")
+    print(f"⚠️ El script escaló al agente: {motivo[:200]}", flush=True)
+    try:
+        codigo = Path(script).read_text(encoding="utf-8")[:6000]
+    except Exception:
+        codigo = "(no pude leer el script)"
+    conversacion = _conversacion_de(tarea)
+    prompt = (
+        f"[Tarea programada · {programador.describir(tarea)} · el script no pudo, resolvé o reportá]\n\n"
+        f"Objetivo: {tarea.get('descripcion') or tarea.get('prompt')}\n\n"
+        f"El workflow determinístico se frenó:\n{motivo[:1500]}\n\n"
+        f"Código del script (en {script}):\n```python\n{codigo}\n```\n\n"
+        f"Si podés, arreglá el script (reescribí ese archivo) y resolvé la tarea; "
+        f"si no, explicá en una línea qué pasó.")
+    try:
+        respuesta = conversacion.enviar(prompt)
+    except Exception as e:
+        programador.registrar_corrida(
+            tarea["id"], ok=False, error=f"script falló y el fallback también: {e}")
+        notificar(tarea["titulo"], "Falló (script + fallback)")
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+    programador.registrar_corrida(tarea["id"], ok=True,
+                                  respuesta="[resuelto por el agente]\n\n" + (respuesta or ""))
+    notificar(tarea["titulo"], "Resuelto por el agente (fallback)")
+    print("✅ Fallback del agente resolvió.", flush=True)
+
+
+def main():
+    tarea = next((t for t in programador.cargar() if t.get("id") == args.tarea), None)
+    if tarea is None:
+        print(f"No existe la tarea {args.tarea}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"▶ Tarea «{tarea['titulo']}» — {programador.describir(tarea)}", flush=True)
+
+    if tarea.get("tipo") == "script" and tarea.get("script"):
+        correr_script(tarea)
+    else:
+        correr_agente(tarea)
 
 
 if __name__ == "__main__":

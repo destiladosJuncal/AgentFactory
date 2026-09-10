@@ -2568,6 +2568,12 @@ class AgenteUI(BASE_TK):
         ttk.Button(botones, text="↻ Refrescar", command=self.refrescar_tareas).pack(side="left")
         ttk.Button(botones, text="🗑 Borrar", command=self.borrar_tarea_seleccionada).pack(side="left", padx=6)
 
+        # Verificar que la tarea realmente corre.
+        acciones = ttk.Frame(izq)
+        acciones.pack(fill="x", pady=(6, 0))
+        ttk.Button(acciones, text="▶ Correr ahora", command=self.correr_tarea_ahora).pack(side="left")
+        ttk.Button(acciones, text="↻ Recargar", command=self.recargar_tarea_sel).pack(side="left", padx=6)
+
         der = ttk.Frame(panel)
         panel.add(der, weight=1)
         self.detalle_tarea_titulo = ttk.Label(
@@ -2630,7 +2636,7 @@ class AgenteUI(BASE_TK):
         self._tareas = prog.listar_tareas()
         self.lista_tareas.delete(0, "end")
         for t in self._tareas:
-            self.lista_tareas.insert("end", f" {t['titulo']}   ({prog.describir(t)})")
+            self.lista_tareas.insert("end", f" {self._emoji_tarea(t)} {t['titulo']}   ({prog.describir(t)})")
         if not self._tareas:
             self.lista_tareas.insert("end", "  (no hay tareas programadas)")
         self.detalle_tarea_titulo.configure(text="Elegí una tarea para ver de qué trata y sus resultados.")
@@ -2649,8 +2655,14 @@ class AgenteUI(BASE_TK):
         if idx >= len(self._tareas):
             return
         t = self._tareas[idx]
+        self._tarea_sel = t
+        est = prog.estado_tarea(t["id"])
+        carga = ("programada en el sistema" if est == "programada"
+                 else ("AUSENTE — no va a correr, tocá «Recargar»" if est == "ausente" else est))
+        tipo = "script (determinística)" if t.get("tipo") == "script" else "agente (usa el modelo)"
         self.detalle_tarea_titulo.configure(text=t["titulo"])
         self.detalle_tarea_meta.configure(text=(
+            f"Estado: {self._emoji_tarea(t)} {carga}   ·   tipo: {tipo}\n"
             f"{prog.describir(t)}   ·   conversación: {t['conversacion']}\n"
             f"creada: {t.get('creado', '—')}   ·   "
             f"última corrida: {t.get('ultima_corrida') or 'todavía no corrió'}"))
@@ -2681,6 +2693,66 @@ class AgenteUI(BASE_TK):
                 "Deja de correr y se quita del sistema."):
             prog.borrar_tarea(t["id"])
             self.refrescar_tareas()
+
+    def _emoji_tarea(self, t):
+        """Semáforo de salud: ⏸ si el sistema no la conoce (no corre), ❌ si la
+        última corrida falló, 🕓 si nunca corrió, ✅ si está sana."""
+        from core import programador as prog
+        try:
+            if prog.estado_tarea(t["id"]) == "ausente":
+                return "⏸"
+            cs = prog.corridas(t["id"])
+            if cs and not cs[0].get("ok"):
+                return "❌"
+            if not cs:
+                return "🕓"
+            return "✅"
+        except Exception:
+            return "•"
+
+    def _seleccionar_tarea_por_id(self, tid):
+        for i, t in enumerate(getattr(self, "_tareas", [])):
+            if t.get("id") == tid:
+                self.lista_tareas.selection_clear(0, "end")
+                self.lista_tareas.selection_set(i)
+                self._al_elegir_tarea(None)
+                return
+
+    def correr_tarea_ahora(self):
+        """Corre la tarea YA (sin esperar el horario) para verificar que funciona."""
+        t = getattr(self, "_tarea_sel", None)
+        if not t:
+            messagebox.showinfo("Tareas", "Elegí una tarea de la lista.")
+            return
+        tid = t["id"]
+        self._log(f"▶ Corriendo «{t['titulo']}» ahora para verificar…")
+        import subprocess
+        from core import interprete
+
+        def worker():
+            try:
+                subprocess.run(
+                    [interprete.interprete(), str(APP_DIR / "correr_tarea.py"), "--tarea", tid],
+                    env=os.environ.copy(), timeout=360, capture_output=True, text=True)
+            except Exception as e:
+                self.cola.put(("log", f"⚠️ error corriendo la tarea: {e}"))
+            self.cola.put(("tarea_corrida", tid))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def recargar_tarea_sel(self):
+        from core import programador as prog
+        t = getattr(self, "_tarea_sel", None)
+        if not t:
+            messagebox.showinfo("Tareas", "Elegí una tarea de la lista.")
+            return
+        r = prog.recargar(t["id"])
+        if r.get("error"):
+            messagebox.showerror("Recargar", f"No pude recargarla:\n{r['error']}")
+        else:
+            messagebox.showinfo("Recargar", "Recargada en el sistema. Ya debería correr según su agenda.")
+        self.refrescar_tareas()
+        self._seleccionar_tarea_por_id(t["id"])
 
     def _al_cambiar_pestana(self, _evento=None):
         try:
@@ -3393,6 +3465,11 @@ class AgenteUI(BASE_TK):
 
                 if tipo == "log":
                     self._log(dato)
+
+                elif tipo == "tarea_corrida":
+                    self._log("✅ Corrida manual terminada — mirá el estado y el historial de la tarea.")
+                    self.refrescar_tareas()
+                    self._seleccionar_tarea_por_id(dato)
 
                 elif tipo == "chat_delta":
                     ruta, fragmento = dato

@@ -42,3 +42,7 @@ _papelera/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Build del .app de macOS (se regenera con construir_app.sh)
+AgentFactory.app/
+examples/

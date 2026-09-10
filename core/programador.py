@@ -70,17 +70,42 @@ def listar_tareas() -> List[Dict[str, Any]]:
     return sorted(cargar(), key=lambda t: (t.get("hora", 0), t.get("minuto", 0)))
 
 
-def crear_tarea(titulo: str, conversacion: str, prompt: str,
-                hora: int, minuto: int, dias: Optional[List[int]] = None) -> Dict[str, Any]:
+def _dir_tarea(tarea_id: str) -> Path:
+    d = dir_datos() / "_tareas" / tarea_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def crear_tarea(titulo: str, conversacion: str, prompt: str = "",
+                hora: int = 0, minuto: int = 0, dias: Optional[List[int]] = None,
+                tipo: str = "agente", intervalo_minutos: Optional[int] = None,
+                codigo: Optional[str] = None, descripcion: str = "") -> Dict[str, Any]:
+    """Crea una tarea programada.
+
+    tipo='agente' → cada corrida invoca al LLM con `prompt` (juicio/redacción).
+    tipo='script' (o si pasás `codigo`) → cada corrida ejecuta un script
+    determinístico; el LLM solo se llama si el script falla (fallback).
+    `intervalo_minutos` = "cada N min"; si no, corre a `hora:minuto`.
+    """
     tid = time.strftime("%Y%m%d%H%M%S")
     tarea = {
         "id": tid, "titulo": titulo or "Tarea",
-        "conversacion": conversacion, "prompt": prompt,
+        "conversacion": conversacion,
+        "prompt": prompt or descripcion or "",
+        "tipo": tipo,
         "hora": int(hora), "minuto": int(minuto),
         "dias": dias or None,
+        "intervalo_minutos": int(intervalo_minutos) if intervalo_minutos else None,
+        "descripcion": descripcion or "",
         "creado": time.strftime("%Y-%m-%d %H:%M:%S"),
         "ultima_corrida": None,
     }
+    if codigo:
+        tarea["tipo"] = "script"
+        ruta = _dir_tarea(tid) / "tarea.py"
+        ruta.write_text(codigo, encoding="utf-8")
+        tarea["script"] = str(ruta)
+
     backend = _backend()
     error = backend.instalar(tarea)
     if error:
@@ -98,13 +123,27 @@ def crear_tarea(titulo: str, conversacion: str, prompt: str,
 
 
 def borrar_tarea(tarea_id: str) -> bool:
+    import shutil
     _backend().desinstalar(tarea_id)
     runs = _runs_path(tarea_id)
     if runs.exists():
         runs.unlink()
+    d = dir_datos() / "_tareas" / tarea_id
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
     tareas = [t for t in cargar() if t.get("id") != tarea_id]
     _guardar(tareas)
     return True
+
+
+def recargar(tarea_id: str) -> Dict[str, Any]:
+    """Reinstala la tarea en el planificador del sistema (arregla una que quedó
+    'ausente', p. ej. tras copiar la carpeta de datos o un reinicio raro)."""
+    t = next((x for x in cargar() if x.get("id") == tarea_id), None)
+    if not t:
+        return {"error": "no existe la tarea"}
+    err = _backend().instalar(t)
+    return {"error": err} if err else {"ok": True}
 
 
 def estado_tarea(tarea_id: str) -> str:
@@ -173,6 +212,8 @@ def corridas(tarea_id: str) -> List[Dict[str, Any]]:
 
 
 def describir(tarea: Dict[str, Any]) -> str:
+    if tarea.get("intervalo_minutos"):
+        return f"cada {int(tarea['intervalo_minutos'])} min"
     hhmm = f"{int(tarea['hora']):02d}:{int(tarea['minuto']):02d}"
     if tarea.get("dias"):
         nombres = ["Do", "Lu", "Ma", "Mi", "Ju", "Vi", "Sa"]

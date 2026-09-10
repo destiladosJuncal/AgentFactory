@@ -22,6 +22,7 @@ from core.herramienta_iteracion import iterar_codigo, TOOLS_SCHEMA_ITERACION
 from core.paquetes import (TOOLS_SCHEMA_PAQUETES, ejecutar_tool_paquetes)
 from core.procesador import ejecutar_tool_procesador, TOOLS_SCHEMA_PROCESADOR
 from core.proxy_tool import ejecutar_tool_proxy, TOOLS_SCHEMA_PROXY
+from core.tarea_tool import ejecutar_tool_tarea, TOOLS_SCHEMA_TAREA
 from core.ejecucion import ejecutar_tool_ejecucion, TOOLS_SCHEMA_EJECUCION
 from core.utils_tools import resumen_tool, resumen_args
 from core.proveedores import crear_proveedor, ErrorProveedor
@@ -34,6 +35,7 @@ NOMBRES_TOOLS_ITERACION = {t["function"]["name"] for t in TOOLS_SCHEMA_ITERACION
 NOMBRES_TOOLS_PAQUETES = {t["function"]["name"] for t in TOOLS_SCHEMA_PAQUETES}
 NOMBRES_TOOLS_PROCESADOR = {t["function"]["name"] for t in TOOLS_SCHEMA_PROCESADOR}
 NOMBRES_TOOLS_PROXY = {t["function"]["name"] for t in TOOLS_SCHEMA_PROXY}
+NOMBRES_TOOLS_TAREA = {t["function"]["name"] for t in TOOLS_SCHEMA_TAREA}
 NOMBRES_TOOLS_EJECUCION = {t["function"]["name"] for t in TOOLS_SCHEMA_EJECUCION}
 
 MAX_MENSAJES_CONTEXTO = None  # cuántos mensajes recientes se mandan al modelo;
@@ -118,6 +120,16 @@ SYSTEM_PROMPT_BASE = (
     "e inferí cuál es (google→google.com, linkedin→linkedin.com). Si hay varios "
     "que encajan o ninguno, preguntale sobre qué sitio querés que trabaje —"
     "nunca inventes. La regla es inferir, y ante la duda, preguntar.\n\n"
+    "TAREAS RECURRENTES (script-first). Cuando la persona pide una tarea "
+    "concreta y repetible ('cada 10 min traeme X', 'todas las mañanas hacé Y') "
+    "—un workflow—, NO la resuelvas re-invocándote cada corrida. Escribí UN "
+    "script Python determinístico que la resuelva, PROBALO con ejecutar_python "
+    "hasta que ande, y registralo con programar_tarea_script (queda en la "
+    "pestaña Tareas y corre solo, barato, sin gastar modelo). El script imprime "
+    "su resultado por stdout; si en algún punto no puede determinar el próximo "
+    "paso, que imprima 'ESCALAR: <motivo>' y ahí —solo ahí— se te invoca como "
+    "fallback para arreglarlo o reportar. Reservá las tareas que corren el "
+    "modelo en cada vuelta para lo que de verdad necesita juicio o redacción.\n\n"
     "Para EXTRAER lo que la persona YA navegó (sus trabajos, perfiles, "
     "resultados), NO hace falta volver a entrar al sitio: los datos ya están en "
     "la captura. Flujo: 1) buscar_en_captura (por sitio/texto/tipo) para ubicar "
@@ -367,7 +379,7 @@ class ConversacionChat:
         return (sorted(NOMBRES_TOOLS_PROYECTO) + sorted(NOMBRES_TOOLS_BIBLIOTECA)
                 + sorted(NOMBRES_TOOLS_ITERACION) + sorted(NOMBRES_TOOLS_EJECUCION)
                 + sorted(NOMBRES_TOOLS_PAQUETES)
-                + sorted(NOMBRES_TOOLS_PROXY)
+                + sorted(NOMBRES_TOOLS_PROXY) + sorted(NOMBRES_TOOLS_TAREA)
                 + (sorted(NOMBRES_TOOLS_PROCESADOR) if self.fraccionar else []))
 
     def _persistir(self):
@@ -421,6 +433,8 @@ class ConversacionChat:
             return ejecutar_tool_procesador(nombre, args)
         if nombre in NOMBRES_TOOLS_PROXY:
             return ejecutar_tool_proxy(nombre, args, redactar=not self.proxy_secretos)
+        if nombre in NOMBRES_TOOLS_TAREA:
+            return ejecutar_tool_tarea(nombre, args, conversacion=self.conversacion_dir.name)
         if nombre in NOMBRES_TOOLS_PAQUETES:
             # permisos: el "permitir siempre" de ESTA conversación, para que
             # instalar_paquete pueda confirmar como lo hace ejecutar_shell.
@@ -458,7 +472,7 @@ class ConversacionChat:
             tools = (TOOLS_PROYECTO + TOOLS_SCHEMA_BIBLIOTECA
                      + TOOLS_SCHEMA_ITERACION + TOOLS_SCHEMA_EJECUCION
                      + TOOLS_SCHEMA_PAQUETES
-                     + TOOLS_SCHEMA_PROXY)
+                     + TOOLS_SCHEMA_PROXY + TOOLS_SCHEMA_TAREA)
             if self.fraccionar:
                 tools = tools + TOOLS_SCHEMA_PROCESADOR
         n_bib = self.biblioteca.listar().get('total', 0)

@@ -78,6 +78,20 @@ def _schtasks(*args) -> subprocess.CompletedProcess:
 
 
 def _disparador(tarea: Dict[str, Any]) -> str:
+    intervalo = tarea.get("intervalo_minutos")
+    if intervalo:
+        # "cada N minutos": disparador diario que se repite cada N min todo el día.
+        return (f"    <CalendarTrigger>\n"
+                f"      <StartBoundary>2000-01-01T00:00:00</StartBoundary>\n"
+                f"      <Enabled>true</Enabled>\n"
+                f"      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>\n"
+                f"      <Repetition>\n"
+                f"        <Interval>PT{int(intervalo)}M</Interval>\n"
+                f"        <Duration>P1D</Duration>\n"
+                f"        <StopAtDurationEnd>false</StopAtDurationEnd>\n"
+                f"      </Repetition>\n"
+                f"    </CalendarTrigger>\n")
+
     hora, minuto = int(tarea["hora"]), int(tarea["minuto"])
     # StartBoundary necesita una fecha; se usa la de creación. Solo marca
     # desde cuándo vale el disparador, no el día en que corre.

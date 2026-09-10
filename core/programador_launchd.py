@@ -41,18 +41,23 @@ def _plist_xml(tarea: Dict[str, Any]) -> str:
     logdir.mkdir(parents=True, exist_ok=True)
     log = str(logdir / f"{tarea['id']}.log")
 
-    # StartCalendarInterval: sin Weekday = todos los días.
-    cal = f"        <key>Hour</key><integer>{int(tarea['hora'])}</integer>\n" \
-          f"        <key>Minute</key><integer>{int(tarea['minuto'])}</integer>\n"
-    dias = tarea.get("dias")  # lista 0-6 (0=domingo), opcional
-    if dias:
-        bloques = "".join(
-            "    <dict>\n"
-            f"        <key>Weekday</key><integer>{int(d)}</integer>\n{cal}"
-            "    </dict>\n" for d in dias)
-        cal_xml = f"    <key>StartCalendarInterval</key>\n    <array>\n{bloques}    </array>\n"
+    intervalo = tarea.get("intervalo_minutos")
+    if intervalo:
+        # "cada N minutos" → StartInterval (en segundos). Independiente de la hora.
+        cal_xml = f"    <key>StartInterval</key>\n    <integer>{int(intervalo) * 60}</integer>\n"
     else:
-        cal_xml = f"    <key>StartCalendarInterval</key>\n    <dict>\n{cal}    </dict>\n"
+        # StartCalendarInterval: sin Weekday = todos los días.
+        cal = f"        <key>Hour</key><integer>{int(tarea['hora'])}</integer>\n" \
+              f"        <key>Minute</key><integer>{int(tarea['minuto'])}</integer>\n"
+        dias = tarea.get("dias")  # lista 0-6 (0=domingo), opcional
+        if dias:
+            bloques = "".join(
+                "    <dict>\n"
+                f"        <key>Weekday</key><integer>{int(d)}</integer>\n{cal}"
+                "    </dict>\n" for d in dias)
+            cal_xml = f"    <key>StartCalendarInterval</key>\n    <array>\n{bloques}    </array>\n"
+        else:
+            cal_xml = f"    <key>StartCalendarInterval</key>\n    <dict>\n{cal}    </dict>\n"
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

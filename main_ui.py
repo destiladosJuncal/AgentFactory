@@ -98,6 +98,7 @@ from core import ejecucion  # noqa: E402
 from core import render_markdown  # noqa: E402
 from core import plataforma, rutas  # noqa: E402
 from core import formato  # noqa: E402
+from core import autocompletado  # noqa: E402
 from core import bienvenida  # noqa: E402
 from core import proxy as proxymod  # noqa: E402
 from core import mac_icono  # noqa: E402
@@ -953,6 +954,22 @@ class AgenteUI(BASE_TK):
         self.entrada.bind("<KeyPress>", self._al_teclear)
         self.entrada.bind("<Shift-Return>", lambda _e: None)
 
+        # Escribí '@' y aparecen los sitios que capturaste, para que en el
+        # prompt quede el dominio EXACTO en vez de un nombre que el modelo
+        # tenga que adivinar. Las flechas y Escape se le delegan acá abajo
+        # porque compiten con las del cuadro de texto.
+        self.completador_sitios = autocompletado.CompletadorSitios(
+            self.entrada, proveedor=self._sitios_para_completar,
+            fuente=(FUENTE_MONO, 11))
+        self.entrada.bind("<Up>", lambda _e: "break"
+                          if self.completador_sitios.al_flecha(-1) else None)
+        self.entrada.bind("<Down>", lambda _e: "break"
+                          if self.completador_sitios.al_flecha(1) else None)
+        self.entrada.bind("<Escape>", lambda _e: "break"
+                          if self.completador_sitios.al_escape() else None)
+        self.entrada.bind("<Tab>", lambda _e: "break"
+                          if self.completador_sitios.al_enter() else None)
+
         columna_botones = ttk.Frame(entrada_frame)
         columna_botones.pack(side="left", padx=(8, 0), fill="y")
         self.boton_enviar = ttk.Button(columna_botones, text="Enviar", command=self.enviar_mensaje)
@@ -1026,8 +1043,24 @@ class AgenteUI(BASE_TK):
         self.entrada.focus_set()
 
     def _al_enter(self, _evento):
+        # Con la lista de sitios abierta, Enter elige la opción en vez de
+        # mandar el mensaje: mandarlo a medio completar sería lo contrario de
+        # lo que la lista viene a evitar.
+        if getattr(self, "completador_sitios", None) and self.completador_sitios.al_enter():
+            return "break"
         self.enviar_mensaje()
         return "break"  # Enter envía; Shift+Enter hace salto de línea
+
+    def _sitios_para_completar(self):
+        """Los sitios capturados, para la lista de autocompletado.
+
+        Se consulta en el momento de abrir la lista y no al arrancar la app:
+        la captura crece mientras navegás."""
+        try:
+            from core import proxy_tool
+            return proxy_tool.listar_sitios_capturados().get("sitios", [])
+        except Exception:
+            return []
 
     def mostrar_bienvenida(self):
         """Ballena + estado. Si falta la API key, lo dice fuerte y manda a

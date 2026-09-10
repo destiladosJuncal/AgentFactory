@@ -19,6 +19,10 @@ from core.proyectos import AGENT_CODE_DIR
 import main_interactivo
 import main_chat
 
+from core import consola  # noqa: E402
+consola.configurar_utf8()
+
+
 
 def mostrar_biblioteca():
     main_interactivo.mostrar_biblioteca()

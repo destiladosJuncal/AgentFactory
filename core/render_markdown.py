@@ -1,3 +1,4 @@
+from core import plataforma
 """
 Renderizador de Markdown para un widget Text de Tkinter.
 
@@ -35,10 +36,16 @@ LENGUAJES_EJECUTABLES = {
 }
 
 
-def configurar_tags(texto, fuente_ui="Helvetica Neue", fuente_mono="Menlo",
+def configurar_tags(texto, fuente_ui=None, fuente_mono=None,
                     color_texto="#1c1e21", color_tenue="#7a808a",
                     color_acento="#1a56db", color_fondo_codigo="#f4f5f7"):
     """Define el aspecto de cada elemento. Se llama una vez por widget."""
+    # Sin fuentes explícitas se usan las del sistema: las de macOS (Helvetica
+    # Neue / Menlo) no existen en Windows y Tk las sustituye por cualquier cosa.
+    if fuente_ui is None or fuente_mono is None:
+        por_defecto_ui, por_defecto_mono = plataforma.fuentes()
+        fuente_ui = fuente_ui or por_defecto_ui
+        fuente_mono = fuente_mono or por_defecto_mono
     t = texto.tag_configure
     t("md_h1", font=(fuente_ui, 17, "bold"), foreground=color_texto,
       spacing1=12, spacing3=6)
@@ -133,7 +140,7 @@ def _insertar_abrible(texto, fragmento: str, tags: tuple, al_abrir):
     etiqueta = f"abrir_{_contador_abribles[0]}"
     texto.insert("end", fragmento, tags + (etiqueta,))
     texto.tag_bind(etiqueta, "<Button-1>", lambda _e, d=fragmento: al_abrir(d))
-    texto.tag_bind(etiqueta, "<Enter>", lambda _e: texto.configure(cursor="pointinghand"))
+    texto.tag_bind(etiqueta, "<Enter>", lambda _e: texto.configure(cursor="hand2"))
     texto.tag_bind(etiqueta, "<Leave>", lambda _e: texto.configure(cursor=""))
 
 
@@ -287,7 +294,7 @@ def _barra_de_codigo(texto, codigo: str, lenguaje: str,
     barra = tk.Frame(texto, bg="#f4f5f7")
     etiqueta = lenguaje or "texto"
     tk.Label(barra, text=f"  {etiqueta}", bg="#f4f5f7", fg="#7a808a",
-             font=("Helvetica Neue", 10)).pack(side="left")
+             font=(plataforma.fuentes()[0], 10)).pack(side="left")
 
     def copiar():
         texto.clipboard_clear()
@@ -346,7 +353,7 @@ def _insertar_imagen(texto, ruta: str, alt: str, base_imagenes, al_abrir_imagen,
         inicio = texto.index("end-2l linestart")
         texto.insert("end", "   Abrir en el visor del sistema\n", ("md_link", etiqueta))
         texto.tag_bind(etiqueta, "<Button-1>", lambda _e, a=archivo: al_abrir_imagen(a))
-        texto.tag_bind(etiqueta, "<Enter>", lambda _e: texto.configure(cursor="pointinghand"))
+        texto.tag_bind(etiqueta, "<Enter>", lambda _e: texto.configure(cursor="hand2"))
         texto.tag_bind(etiqueta, "<Leave>", lambda _e: texto.configure(cursor=""))
     texto.insert("end", "\n")
 

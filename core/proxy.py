@@ -27,6 +27,7 @@ es lo cómodo para arrancar pero conviene acotar apenas sepas qué vas a probar.
 
 import asyncio
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -34,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
+from core import plataforma
 from core.rutas import dir_datos
 
 PUERTO_DEFAULT = 8899
@@ -636,21 +638,206 @@ def ca_pem_global() -> Path:
     return dir_proxy() / "mitm" / "mitmproxy-ca-cert.pem"
 
 
-def _perfil_en_uso(perfil: Path) -> bool:
-    """¿Hay un Firefox vivo usando NUESTRO perfil? (no el default de la persona)."""
+def ca_cer_global() -> Path:
+    """La misma CA en formato DER, que es el que come el almacén de Windows."""
+    return dir_proxy() / "mitm" / "mitmproxy-ca-cert.cer"
+
+
+# --- Confiar la CA en el almacén de Windows (opcional, reversible) -----------
+#
+# En Windows no se puede usar el camino de macOS: el certutil de NSS —el que
+# sabe escribir en el cert9.db de Firefox— no viene con Firefox (solo trae
+# nss3.dll), y el certutil.exe que SÍ está en el PATH es el de Microsoft, con
+# otra sintaxis. La función _certutil() de arriba ya lo detecta y lo descarta
+# bien, así que el camino por defecto en Windows es la instalación manual por
+# mitm.it: dos clics, una sola vez, y su alcance es el perfil descartable.
+#
+# Esto de acá es la alternativa: meter la CA en el almacén de confianza DEL
+# USUARIO (no del equipo: no hace falta ser administrador) y decirle a Firefox
+# que lea ese almacén con security.enterprise_roots.
+#
+# Es deliberadamente un botón aparte y no algo que pase solo al abrir Firefox.
+# La diferencia importa: instalarla en el perfil afecta solo a ese Firefox
+# descartable, mientras que meterla en el almacén de Windows hace que TODAS las
+# aplicaciones de esta cuenta confíen en la CA de mitmproxy. Es un radio de
+# acción bastante más grande que el del camino de macOS, y merece un clic
+# consciente. Por eso también existe quitar_ca_de_windows().
+
+def _marca_ca_windows() -> Path:
+    return dir_proxy() / "ca-en-windows.json"
+
+
+def _huella_ca() -> Optional[str]:
+    """Huella SHA-1 de la CA, que es como certutil identifica un certificado
+    para borrarlo después."""
+    pem = ca_pem_global()
+    if not pem.exists():
+        return None
+    try:
+        import hashlib
+        import ssl
+        der = ssl.PEM_cert_to_DER_cert(pem.read_text(encoding="utf-8"))
+        return hashlib.sha1(der).hexdigest()
+    except Exception:
+        return None
+
+
+def ca_confiada(perfil: Path) -> bool:
+    """¿El perfil va a confiar en la CA, por cualquiera de los dos caminos?
+
+    Hace falta mirar los dos: por enterprise roots el certificado NO queda en
+    el cert9.db, así que preguntarle solo a ca_instalada_en_firefox() daría
+    False para siempre y la app reabriría mitm.it en cada arranque."""
+    return ca_instalada_en_firefox(perfil) or _marca_ca_windows().exists()
+
+
+def confiar_ca_en_windows(perfil: Path) -> Dict[str, Any]:
+    """Agrega la CA al almacén del usuario y habilita enterprise roots.
+
+    Windows muestra su propio cuadro de confirmación al agregar una raíz de
+    confianza: eso es correcto y no se intenta evitar."""
+    if not plataforma.ES_WINDOWS:
+        return {"error": "Esto solo aplica en Windows."}
+
+    pem = ca_pem_global()
+    if not pem.exists():
+        return {"error": "Todavía no hay CA generada: encendé la captura una vez."}
+
+    cer = ca_cer_global()
+    if not cer.exists():
+        # mitmproxy suele dejar el .cer al lado, pero si no está se deriva del
+        # .pem, que siempre existe.
+        try:
+            import ssl
+            cer.write_bytes(ssl.PEM_cert_to_DER_cert(pem.read_text(encoding="utf-8")))
+        except Exception as e:
+            return {"error": f"No pude preparar el certificado: {e}"}
+
     import subprocess
     try:
-        out = subprocess.run(["pgrep", "-fl", "firefox"], capture_output=True,
-                             text=True, timeout=5).stdout
+        r = subprocess.run(
+            ["certutil.exe", "-user", "-addstore", "Root", str(cer)],
+            capture_output=True, text=True, timeout=60,
+            encoding=plataforma.codificacion_consola(), errors="replace")
+    except Exception as e:
+        return {"error": f"No pude ejecutar certutil: {e}"}
+
+    if r.returncode != 0:
+        detalle = (r.stderr or r.stdout or "").strip()[:300]
+        return {"error": f"Windows no aceptó el certificado: {detalle}"}
+
+    # Firefox no mira el almacén de Windows salvo que se le pida. Este pref va
+    # SOLO en el perfil de captura: ponerlo en general haría que ese perfil
+    # confiara además en cualquier raíz corporativa del equipo, que es un
+    # cambio de comportamiento que nadie pidió.
+    try:
+        user_js = Path(perfil) / "user.js"
+        actual = user_js.read_text(encoding="utf-8") if user_js.exists() else ""
+        if "security.enterprise_roots.enabled" not in actual:
+            with open(user_js, "a", encoding="utf-8") as f:
+                f.write('user_pref("security.enterprise_roots.enabled", true);\n')
+    except OSError as e:
+        return {"error": f"Agregué el certificado pero no pude configurar el perfil: {e}"}
+
+    _marca_ca_windows().write_text(
+        json.dumps({"huella": _huella_ca(), "cuando": time.strftime("%Y-%m-%d %H:%M:%S")},
+                   ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {"ok": True,
+            "aviso": ("Listo: Windows confía en la CA de la captura para tu usuario, "
+                      "y el Firefox del proxy la va a usar. Cerrá y reabrí Firefox "
+                      "si estaba abierto. Podés revertirlo cuando quieras.")}
+
+
+def quitar_ca_de_windows() -> Dict[str, Any]:
+    """Deshace confiar_ca_en_windows(). Existe porque una CA de intercepción
+    no puede ser una decisión de una sola dirección."""
+    if not plataforma.ES_WINDOWS:
+        return {"error": "Esto solo aplica en Windows."}
+
+    marca = _marca_ca_windows()
+    huella = None
+    if marca.exists():
+        try:
+            huella = json.loads(marca.read_text(encoding="utf-8")).get("huella")
+        except Exception:
+            pass
+    huella = huella or _huella_ca()
+    if not huella:
+        return {"error": "No sé qué certificado sacar: no encuentro la huella."}
+
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["certutil.exe", "-user", "-delstore", "Root", huella],
+            capture_output=True, text=True, timeout=60,
+            encoding=plataforma.codificacion_consola(), errors="replace")
+    except Exception as e:
+        return {"error": f"No pude ejecutar certutil: {e}"}
+
+    if marca.exists():
+        try:
+            marca.unlink()
+        except OSError:
+            pass
+
+    if r.returncode != 0:
+        detalle = (r.stderr or r.stdout or "").strip()[:300]
+        return {"error": f"certutil devolvió un error (quizá ya no estaba): {detalle}"}
+    return {"ok": True, "aviso": "Windows ya no confía en la CA de la captura."}
+
+
+def _perfil_en_uso(perfil: Path) -> bool:
+    """¿Hay un Firefox vivo usando NUESTRO perfil? (no el default de la persona).
+
+    Antes esto era `pgrep -fl firefox`, que no existe en Windows y hacía que la
+    función devolviera siempre False. psutil ya es dependencia y sirve en los
+    tres sistemas."""
+    try:
+        import psutil
+    except ImportError:
+        return _perfil_lockeado(perfil)
+
+    objetivo = str(perfil).lower()
+    try:
+        for p in psutil.process_iter(["name", "cmdline"]):
+            try:
+                nombre = (p.info.get("name") or "").lower()
+                if "firefox" not in nombre:
+                    continue
+                linea = " ".join(p.info.get("cmdline") or []).lower()
+                if objetivo in linea:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
     except Exception:
+        return _perfil_lockeado(perfil)
+    return False
+
+
+def _perfil_lockeado(perfil: Path) -> bool:
+    """Respaldo de _perfil_en_uso cuando no se pueden leer las líneas de comando.
+
+    Firefox mantiene el lock del perfil abierto en exclusiva mientras corre, así
+    que en Windows intentar renombrarlo falla si está en uso. En POSIX el lock es
+    un symlink y esta prueba no dice nada, así que ahí se contesta que no."""
+    if not plataforma.ES_WINDOWS:
         return False
-    return str(perfil) in out
+    lock = Path(perfil) / "parent.lock"
+    if not lock.exists():
+        return False
+    try:
+        os.rename(lock, lock)
+        return False
+    except OSError:
+        return True
 
 
 def _limpiar_locks(perfil: Path):
     """Saca los locks que deja un arranque fallido. Solo se llama cuando ya
     verificamos que ningún Firefox está usando el perfil."""
-    for nombre in (".parentlock", "lock", ".lock"):
+    # En Windows el archivo se llama 'parent.lock'; en macOS/Linux, '.parentlock'.
+    for nombre in (".parentlock", "parent.lock", "lock", ".lock"):
         try:
             (Path(perfil) / nombre).unlink()
         except OSError:
@@ -668,9 +855,9 @@ def lanzar_firefox(puerto: int) -> Dict[str, Any]:
     clics), que es lo que hace falta para que HTTPS no dé error."""
     import subprocess
 
-    bundle = "/Applications/Firefox.app"
-    if not Path(bundle).exists():
-        return {"error": "No encontré Firefox en /Applications."}
+    firefox = plataforma.ruta_firefox()
+    if firefox is None:
+        return {"error": plataforma.como_instalar_firefox()}
 
     perfil = dir_proxy() / "firefox"
     perfil.mkdir(parents=True, exist_ok=True)
@@ -690,7 +877,11 @@ def lanzar_firefox(puerto: int) -> Dict[str, Any]:
 
     # Instalar la CA si falta. Si ya está (lo normal salvo la primera vez), no
     # se toca nada y Firefox abre directo al sitio, sin pasar por mitm.it.
-    cert = instalar_ca_firefox(perfil)
+    if ca_confiada(perfil):
+        # Puede estar en el cert9.db (macOS) o en el almacén de Windows.
+        cert = {"estado": "ya"}
+    else:
+        cert = instalar_ca_firefox(perfil)
     manual = cert["estado"] == "manual"
     inicio = "http://mitm.it" if manual else "about:blank"
 
@@ -703,16 +894,33 @@ def lanzar_firefox(puerto: int) -> Dict[str, Any]:
     _limpiar_locks(perfil)   # el perfil no está en uso: si hay lock, es viejo
 
     try:
-        # 'open -n -a' es la forma correcta en macOS: usa LaunchServices, se
-        # detacha bien (launchd adopta el proceso) y convive con tu Firefox
-        # normal. Lanzar el binario interno directo dejaba un zombie y salía al
-        # toque cuando ya había otra instancia. subprocess.run espera a que
-        # 'open' termine (es instantáneo) y lo cosecha: sin defunct.
-        subprocess.run(
-            ["open", "-n", "-a", bundle, "--args",
-             "-no-remote", "-profile", str(perfil), inicio],
-            check=True, timeout=20,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if plataforma.ES_MAC:
+            # 'open -n -a' es la forma correcta en macOS: usa LaunchServices, se
+            # detacha bien (launchd adopta el proceso) y convive con tu Firefox
+            # normal. Lanzar el binario interno directo dejaba un zombie y salía al
+            # toque cuando ya había otra instancia. subprocess.run espera a que
+            # 'open' termine (es instantáneo) y lo cosecha: sin defunct.
+            subprocess.run(
+                ["open", "-n", "-a", str(firefox), "--args",
+                 "-no-remote", "-profile", str(perfil), inicio],
+                check=True, timeout=20,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # Fuera de macOS se lanza el binario directo. '-no-remote -profile'
+            # es el mecanismo portable que 'open -n' envolvía: sin él, Firefox
+            # le pasa la URL a la instancia que ya estuviera abierta y el perfil
+            # de captura nunca se usa.
+            #
+            # Popen y no run: run esperaría a que Firefox se cierre, y esto lo
+            # llama el hilo de la interfaz — la app quedaría congelada mientras
+            # la persona navega.
+            banderas = 0
+            if plataforma.ES_WINDOWS:
+                banderas = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_GROUP
+            subprocess.Popen(
+                [str(firefox), "-no-remote", "-profile", str(perfil), inicio],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, close_fds=True, creationflags=banderas)
     except subprocess.CalledProcessError as e:
         return {"error": f"Firefox no pudo abrir (open devolvió {e.returncode})."}
     except Exception as e:
@@ -722,6 +930,15 @@ def lanzar_firefox(puerto: int) -> Dict[str, Any]:
         aviso = "El certificado ya estaba instalado. Navegá tranquilo: HTTPS se intercepta."
     elif cert["estado"] == "instalada":
         aviso = "Instalé el certificado en el perfil (una sola vez, queda para siempre). Ya podés navegar."
+    elif plataforma.ES_WINDOWS:
+        aviso = ("Falta el certificado. En la pestaña de mitm.it que se acaba de "
+                 "abrir: clic en 'Other', se baja un archivo, y en Firefox andá a "
+                 "Configuración → Privacidad y seguridad → Certificados → Ver "
+                 "certificados → Importar, elegí ese archivo y marcá «Confiar en "
+                 "esta CA para identificar sitios web». Es una sola vez.\n\n"
+                 "Alternativa: el botón «Confiar el certificado en Windows» hace "
+                 "esto solo, pero la CA pasa a valer para todas las aplicaciones "
+                 "de tu usuario, no solo para este Firefox.")
     else:
         aviso = ("No pude instalar el certificado solo (" + cert.get("motivo", "") + ").\n\n"
                  "Abrí mitm.it, elegí 'Other' e instalalo a mano — es una sola vez. "

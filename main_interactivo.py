@@ -10,6 +10,10 @@ from core.agente_interactivo import AgenteInteractivo, OBJETIVOS_DEFAULT
 from core.biblioteca import Biblioteca
 from core.proveedores import proveedor_configurado
 
+from core import consola  # noqa: E402
+consola.configurar_utf8()
+
+
 
 def pedir_float(mensaje, default):
     valor = input(f"{mensaje} [{default}]: ").strip()

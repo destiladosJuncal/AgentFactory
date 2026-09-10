@@ -5,6 +5,10 @@ import os
 from dotenv import load_dotenv
 from core.agente import AgenteCodigo
 
+from core import consola  # noqa: E402
+consola.configurar_utf8()
+
+
 
 def main():
     parser = argparse.ArgumentParser(

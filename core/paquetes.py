@@ -26,6 +26,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core import interprete
+
 TIMEOUT_INSTALACION = 600   # instalar scipy/torch lleva su rato
 
 
@@ -109,6 +111,12 @@ def entorno(workspace=None) -> Dict[str, str]:
     """Copia del entorno con el PYTHONPATH del almacén puesto."""
     env = dict(os.environ)
     env["PYTHONPATH"] = pythonpath(workspace)
+    # Sin esto, un script que imprima '→' con el stdout capturado en un pipe
+    # usa la codificación local (cp1252 en Windows) y muere con
+    # UnicodeEncodeError antes de hacer nada. Inofensivo en macOS, y acá cubre
+    # de una sola vez a ejecutar_python y a ejecutar_shell.
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     return env
 
 
@@ -116,9 +124,9 @@ def _pip_instalar(requisito: str, destino: Path) -> Tuple[bool, str]:
     destino.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--target", str(destino),
+            [interprete.interprete(), "-m", "pip", "install", "--target", str(destino),
              "--upgrade", requisito],
-            capture_output=True, text=True, timeout=TIMEOUT_INSTALACION)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT_INSTALACION)
     except subprocess.TimeoutExpired:
         return False, f"La instalación superó los {TIMEOUT_INSTALACION}s"
     except Exception as e:

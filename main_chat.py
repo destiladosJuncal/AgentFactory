@@ -9,6 +9,10 @@ from core.conversaciones import GestorConversaciones, CONVERSACIONES_DIR
 from core.chat import ConversacionChat
 from core.proveedores import proveedor_configurado
 
+from core import consola  # noqa: E402
+consola.configurar_utf8()
+
+
 
 def mostrar_conversaciones(conversaciones):
     if not conversaciones:

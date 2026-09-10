@@ -55,6 +55,13 @@ CANDIDATOS_INSTALACION = [
 
 
 def _resolver_instalacion() -> Path:
+    # Empaquetado con PyInstaller, los módulos viven DENTRO del ejecutable: no
+    # hay ningún core/chat.py en disco que encontrar, y la comprobación de
+    # abajo fallaría siempre. La carpeta de la app es la del .exe, que es
+    # además donde quedan los datos que se empaquetaron al lado.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
     for candidato in CANDIDATOS_INSTALACION:
         if (candidato / "core" / "chat.py").exists():
             return candidato
@@ -96,6 +103,12 @@ from core import proxy as proxymod  # noqa: E402
 from core import mac_icono  # noqa: E402
 from core import config as configuracion, empaquetar  # noqa: E402
 from core.proveedores import MODELOS_DISPONIBLES, etiqueta_de, desde_etiqueta  # noqa: E402
+
+from core import interprete
+
+from core import consola  # noqa: E402
+consola.configurar_utf8()
+
 
 # Si este archivo corre desde adentro del .app, su carpeta es el Resources del
 # bundle — y ese main_ui.py también entra en el historial de versiones.
@@ -464,8 +477,11 @@ class DialogoVersiones(tk.Toplevel):
                 "Restaurar versión",
                 "No tengo permiso de escritura sobre la instalación, así que la "
                 "restauración quedó a medias.\n\n"
-                "Se arregla una sola vez con:\n\n"
-                "sudo chown -R $(whoami) /Applications/AgenteDeepSeek",
+                + ("Se arregla una sola vez con:\n\n"
+                   "sudo chown -R $(whoami) /Applications/AgenteDeepSeek"
+                   if plataforma.ES_MAC else
+                   "Revisá que tu usuario tenga permiso de escritura sobre la "
+                   "carpeta de la app, o movela adentro de tu carpeta de usuario."),
                 parent=self)
             return
 
@@ -709,8 +725,12 @@ class AgenteUI(BASE_TK):
             self.iconphoto(True, self._icono_img)     # ventana y toplevels
         except Exception:
             pass
+        if plataforma.ES_WINDOWS:
+            from core import win_icono
+            win_icono.poner_icono_taskbar(self, APP_DIR / "icono.ico")
+            return
         self.update_idletasks()                        # que exista NSApplication
-        mac_icono.poner_icono_dock(png)                # Dock + diálogos nativos
+        mac_icono.poner_icono_dock(png)                # Dock + dialogos nativos
 
     def _construir_cabecera(self):
         cabecera = tk.Frame(self, bg=COLOR_PANEL, padx=16, pady=10)
@@ -738,7 +758,8 @@ class AgenteUI(BASE_TK):
         tk.Label(cabecera, text=f"{AGENT_CODE_DIR}  ", bg=COLOR_PANEL, fg=COLOR_TENUE,
                  font=(FUENTE_MONO, 10)).pack(side="right")
 
-        tk.Label(cabecera, text="⌘R refrescar · ⌘0 versiones   ", bg=COLOR_PANEL,
+        tk.Label(cabecera, text=("⌘R refrescar · ⌘0 versiones   " if plataforma.ES_MAC
+                                else "Ctrl+R refrescar · Ctrl+0 versiones   "), bg=COLOR_PANEL,
                  fg=COLOR_TENUE, font=(FUENTE_UI, 10)).pack(side="right")
 
     def _maximizar(self):
@@ -946,7 +967,11 @@ class AgenteUI(BASE_TK):
         self.check_admin = ttk.Checkbutton(
             columna_botones, text="Admin", variable=self.admin_habilitado,
             command=self._al_cambiar_admin)
-        self.check_admin.pack(anchor="w")
+        # Solo donde la elevacion existe de verdad. En Windows haria falta una
+        # vuelta por UAC que no esta implementada, y el control quedaria
+        # prometiendo algo que siempre falla.
+        if plataforma.soporta_elevacion():
+            self.check_admin.pack(anchor="w")
 
         # Proxy quitado de la UI: se mantiene la variable para no romper
         # referencias internas (guardado/carga de conversación), sin control visible.
@@ -2089,8 +2114,14 @@ class AgenteUI(BASE_TK):
         ttk.Button(acciones, text="🔄 Diagnóstico", command=self.refrescar_diagnostico).pack(side="left", padx=6)
         ttk.Button(acciones, text="💲 Actualizar precios",
                    command=self.actualizar_precios).pack(side="left", padx=(0, 6))
-        ttk.Button(acciones, text="🐋 Crear instalador (.dmg)",
-                   command=self.crear_instalador).pack(side="left")
+        # El .dmg lo arma ditto/hdiutil: solo existe en macOS. En el resto se
+        # ofrece el zip portable, que ya estaba escrito pero no tenia boton.
+        if plataforma.ES_MAC:
+            ttk.Button(acciones, text="🐋 Crear instalador (.dmg)",
+                       command=self.crear_instalador).pack(side="left")
+        else:
+            ttk.Button(acciones, text="📦 Crear paquete portable (.zip)",
+                       command=self.crear_zip_portable).pack(side="left")
         ttk.Button(acciones, text="📂 Abrir carpeta de datos",
                    command=lambda: plataforma.abrir_carpeta(rutas.dir_datos())).pack(side="left", padx=6)
 
@@ -2142,11 +2173,15 @@ class AgenteUI(BASE_TK):
         self._escribir_config(f"  Código         {d['app']}  {marca(d['app_existe'])}\n")
         self._escribir_config(f"  Configuración  {d['env']}  {marca(d['env_existe'])}\n")
 
-        if d["env_permisos"] and d["env_permisos"] != "0o600":
+        # El orden importa: en Windows chmod(0o600) "funciona" pero el archivo
+        # reporta 0o666, así que preguntar primero por el modo daba una alarma
+        # falsa ("otros pueden leer tus claves") en cada arranque.
+        if not plataforma.soporta_permisos_posix():
+            self._escribir_config("                 ℹ️ en Windows el acceso va por ACLs, "
+                                  "no por permisos POSIX\n")
+        elif d["env_permisos"] and d["env_permisos"] != "0o600":
             self._escribir_config(f"                 ⚠️ permisos {d['env_permisos']}: "
                                   f"otros usuarios del equipo pueden leer tus claves\n", "mal")
-        elif not plataforma.soporta_permisos_posix():
-            self._escribir_config("                 ⚠️ en Windows los permisos POSIX no aplican\n", "mal")
 
         faltan = [s for s, ok in d["subcarpetas"].items() if not ok]
         self._escribir_config(f"  Subcarpetas    {'todas ✅' if not faltan else '❌ faltan: ' + ', '.join(faltan)}\n")
@@ -2372,6 +2407,10 @@ class AgenteUI(BASE_TK):
         self.arbol_proxy.bind("<<TreeviewSelect>>", self._al_elegir_flujo)
         self.arbol_proxy.bind("<BackSpace>", self._borrar_seleccion_proxy)
         self.arbol_proxy.bind("<Delete>", self._borrar_seleccion_proxy)
+        # Button-3 es el clic derecho de verdad en Windows y Linux, y tambien
+        # funciona en macOS. Los otros dos son las convenciones de macOS
+        # (boton del medio / Control+clic) y se dejan por costumbre.
+        self.arbol_proxy.bind("<Button-3>", self._menu_flujo)
         self.arbol_proxy.bind("<Button-2>", self._menu_flujo)
         self.arbol_proxy.bind("<Control-Button-1>", self._menu_flujo)
         # id de flujo por cada nodo del árbol
@@ -2460,9 +2499,16 @@ class AgenteUI(BASE_TK):
 
     def _instalar_mitmproxy(self):
         import subprocess
-        r = subprocess.run([sys.executable, "-m", "pip", "install", "mitmproxy"],
-                          capture_output=True, text=True)
-        self.cola.put(("proxy_instalado", r.returncode == 0 or (r.stderr or "")[-300:]))
+        # Corre en un hilo: sin try/except, cualquier error se lleva el hilo en
+        # silencio y la UI se queda esperando para siempre.
+        try:
+            r = subprocess.run(
+                [interprete.interprete(), "-m", "pip", "install", "mitmproxy"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+            resultado = r.returncode == 0 or (r.stderr or "")[-300:]
+        except Exception as e:
+            resultado = f"No pude ejecutar pip: {e}"
+        self.cola.put(("proxy_instalado", resultado))
 
     # -- pestaña tareas (los cron) -----------------------------------------
 
@@ -2744,7 +2790,7 @@ class AgenteUI(BASE_TK):
         def worker():
             import subprocess
             r = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "mitmproxy"],
+                [interprete.interprete(), "-m", "pip", "install", "mitmproxy"],
                 capture_output=True, text=True)
             estado["ok"] = (r.returncode == 0)
             estado["err"] = (r.stderr or r.stdout or "").strip()[-500:]
@@ -3449,7 +3495,16 @@ class AgenteUI(BASE_TK):
 
 
 def main():
+    # Antes de crear la ventana: sin esto Windows escala toda la interfaz
+    # como un bitmap en pantallas al 125/150% y se ve borrosa.
+    escala = plataforma.preparar_dpi()
     app = AgenteUI()
+    if escala:
+        # Hacerse consciente del DPI sin compensar deja todo diminuto.
+        try:
+            app.tk.call("tk", "scaling", escala)
+        except Exception:
+            pass
     app.mainloop()
 
 

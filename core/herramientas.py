@@ -19,9 +19,12 @@ Diseño de seguridad:
 """
 
 import subprocess
+import re
 import shlex
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+
+from core import plataforma
 
 MAX_ARCHIVO_CHARS = 20_000
 MAX_ESCRITURA_CHARS = 200_000
@@ -48,7 +51,7 @@ def revisar_ruta(ruta: str, campo: str = "ruta") -> Optional[str]:
                 f"En escribir_archivo la ruta va en 'ruta' y el código en "
                 f"'contenido'; para correr un script usá ejecutar_python con "
                 f"el código en 'codigo'.")
-    if any(len(parte.encode("utf-8")) > MAX_LARGO_NOMBRE for parte in ruta.split("/")):
+    if any(len(parte.encode("utf-8")) > MAX_LARGO_NOMBRE for parte in re.split(r"[\\/]", ruta)):
         return (f"'{campo}' tiene un tramo de más de {MAX_LARGO_NOMBRE} caracteres, "
                 f"que el sistema de archivos no admite. Si lo que querías era "
                 f"escribir contenido, va en 'contenido', no en '{campo}'.")
@@ -64,9 +67,12 @@ PATRONES_BLOQUEADOS = ('.env', 'secret', 'credential', 'password', 'token', '.pe
 # esta whitelist fuera decorativa: `python3 -c "..."` ejecutaba cualquier cosa
 # en cualquier lado. Las conversaciones ahora tienen ejecución de verdad y
 # declarada en core/ejecucion.py; no hace falta esta puerta lateral.
-COMANDOS_PERMITIDOS = {
-    'ls', 'cat', 'find', 'grep', 'wc', 'head', 'tail', 'tree',
-}
+#
+# La lista sale de core/plataforma.py porque no es la misma en todos lados: en
+# Windows ninguno de estos existe salvo 'find', que además es OTRO comando (busca
+# texto adentro de archivos, no archivos), así que el modelo pediría
+# `find . -name "*.py"` y recibiría basura — peor que un error.
+COMANDOS_PERMITIDOS = plataforma.comandos_solo_lectura()
 
 
 class Herramientas:
@@ -197,14 +203,20 @@ class Herramientas:
 
     def ejecutar_comando(self, comando: str) -> Dict[str, Any]:
         try:
-            partes = shlex.split(comando)
+            # En Windows shlex en modo POSIX se come las '\' de las rutas.
+            partes = shlex.split(comando, posix=not plataforma.ES_WINDOWS)
+            if plataforma.ES_WINDOWS:
+                partes = [p.strip('"') for p in partes]
         except ValueError as e:
             return {"error": f"Comando inválido: {e}"}
 
         if not partes:
             return {"error": "Comando vacío"}
 
-        binario = partes[0]
+        # Se normaliza para que 'WHERE.EXE' y 'C:\...\where.exe' entren igual.
+        binario = Path(partes[0]).name.lower()
+        if plataforma.ES_WINDOWS and binario.endswith(".exe"):
+            binario = binario[:-4]
         if binario not in COMANDOS_PERMITIDOS:
             return {"error": f"Comando no permitido: '{binario}'. Permitidos: {sorted(COMANDOS_PERMITIDOS)}"}
 
@@ -222,7 +234,8 @@ class Herramientas:
         if any(p.startswith('~') for p in partes[1:]):
             return {"error": (
                 "Acá no hay shell, así que '~' no se expande y quedaría como un directorio "
-                "literal. Usá la ruta absoluta (por ejemplo /Users/<usuario>/Downloads)."
+                "literal. Usá la ruta absoluta (por ejemplo "
+                f"{plataforma.ejemplo_ruta_absoluta()})."
             )}
 
         try:
@@ -231,6 +244,8 @@ class Herramientas:
                 cwd=self.base_dir,
                 capture_output=True,
                 text=True,
+                encoding=plataforma.codificacion_consola(),
+                errors="replace",
                 timeout=TIMEOUT_COMANDO,
                 shell=False
             )

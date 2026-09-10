@@ -66,6 +66,12 @@ def dir_app() -> Path:
     if forzada:
         return forzada
 
+    # Congelado con PyInstaller no hay archivos .py en disco que reconocer: la
+    # instalación es la carpeta del ejecutable.
+    import sys
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
     # core/rutas.py -> core/ -> raíz de la instalación
     propia = Path(__file__).resolve().parent.parent
     if (propia / "core" / "chat.py").exists():

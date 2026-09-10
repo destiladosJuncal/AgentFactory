@@ -25,13 +25,14 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 from core import plataforma
 from core.herramientas import revisar_ruta
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from core import interprete
 
 TIMEOUT_DEFAULT = 60
 TIMEOUT_MAXIMO = 600
@@ -75,6 +76,10 @@ def analizar_riesgo(texto: str, es_python: bool = False) -> List[Tuple[str, str]
     if es_python:
         # Un script Python también puede traer shell adentro: miramos los dos.
         patrones = patrones + PATRONES_DESTRUCTIVOS
+    # Los patrones de arriba son todos de Unix. En Windows, `del`, `Remove-Item`
+    # o `robocopy /MIR` no se parecen a ninguno y pasaban SIN pedir confirmación:
+    # el guard existía pero no cubría el sistema en el que estaba corriendo.
+    patrones = patrones + plataforma.patrones_destructivos_del_sistema()
     hallazgos, vistos = [], set()
     for clave, patron, explicacion in patrones:
         if clave in vistos:
@@ -169,18 +174,35 @@ def _rutas_de(comando: str, cwd: Path) -> Dict[str, List[str]]:
         destino.append(m.group(1))
 
     try:
-        partes = shlex.split(comando)
+        # shlex en modo POSIX trata '\' como escape: 'del C:\Users\pc\x.txt'
+        # se convertiría en 'C:Userspcx.txt'. Esto alimenta el texto que la
+        # persona LEE para decidir si aprueba un comando destructivo, así que
+        # mostrar la ruta equivocada no es cosmético.
+        partes = shlex.split(comando, posix=not plataforma.ES_WINDOWS)
+        if plataforma.ES_WINDOWS:
+            # En modo no-POSIX las comillas quedan pegadas al token.
+            partes = [p.strip('"') for p in partes]
     except ValueError:
         partes = comando.split()
 
     argumentos = [p for p in partes[1:]
-                  if not p.startswith("-") and p not in (">", ">>", "|", "&&", ";")]
-    binario = Path(partes[0]).name if partes else ""
+                  if not p.startswith(("-", "/")) and p not in (">", ">>", "|", "&&", ";")]
+    binario = Path(partes[0]).name.lower() if partes else ""
+    # En Windows el binario puede venir con extensión: robocopy.exe -> robocopy
+    if plataforma.ES_WINDOWS and binario.endswith(".exe"):
+        binario = binario[:-4]
 
-    if binario in ("mv", "cp", "rsync", "install") and len(argumentos) >= 2:
+    if binario == "robocopy" and len(argumentos) >= 2:
+        # robocopy ORIGEN DESTINO [archivos...]: el destino es el segundo, no
+        # el último. Importa porque con /MIR el destino es lo que se BORRA.
+        origen.append(argumentos[0])
+        destino.append(argumentos[1])
+    elif binario in ("mv", "cp", "rsync", "install",
+                     "move", "copy", "xcopy") and len(argumentos) >= 2:
         origen += argumentos[:-1]
         destino.append(argumentos[-1])
-    elif binario in ("rm", "rmdir", "unlink", "shred", "srm", "truncate"):
+    elif binario in ("rm", "rmdir", "unlink", "shred", "srm", "truncate",
+                     "del", "erase", "rd"):
         destino += argumentos
     elif argumentos:
         origen += argumentos
@@ -381,9 +403,19 @@ def ejecutar_shell(comando: str, directorio: str = "", timeout: Any = TIMEOUT_DE
 
     try:
         from core import paquetes
+        # shell=True en Windows significa "%COMSPEC% /c <string>", que es
+        # exactamente lo que devuelve shell_por_defecto(). Se deja pasar el
+        # comando como string y NO como lista: subprocess re-citaría cada
+        # elemento con list2cmdline y corrompería comillas y espacios.
+        # executable= solo aplica en POSIX; en Windows subprocess lo ignora
+        # para shell=True, pero pasarle "/bin/bash" igual es pedir problemas.
+        # En POSIX se sigue forzando bash y no $SHELL: el schema de la tool le
+        # promete bash al modelo, y en una Mac moderna $SHELL es zsh.
+        extra = {} if plataforma.ES_WINDOWS else {"executable": "/bin/bash"}
         proc = subprocess.run(
             comando, shell=True, cwd=str(cwd), capture_output=True, text=True,
-            timeout=_timeout(timeout), executable="/bin/bash",
+            encoding=plataforma.codificacion_consola(), errors="replace",
+            timeout=_timeout(timeout), **extra,
             # PYTHONPATH apuntando al almacén compartido (+ overlay local): así
             # un script usa las bibliotecas ya instaladas sin volver a bajarlas.
             env=paquetes.entorno(base),
@@ -417,7 +449,7 @@ def ejecutar_python(codigo: str, directorio: str = "", timeout: Any = TIMEOUT_DE
         try:
             from core import paquetes
             proc = subprocess.run(
-                [sys.executable, str(script)], cwd=str(cwd),
+                [interprete.interprete(), str(script)], cwd=str(cwd),
                 capture_output=True, text=True, timeout=_timeout(timeout),
                 env=paquetes.entorno(base),
             )
@@ -453,18 +485,16 @@ TOOLS_SCHEMA_EJECUCION: List[Dict[str, Any]] = [
         "function": {
             "name": "ejecutar_shell",
             "description": (
-                "Ejecuta un comando de shell REAL (bash) en la máquina del usuario. "
-                "Funcionan pipes, redirecciones, '~', variables, y cualquier binario "
-                "instalado: git, curl, sed, awk, brew, etc. Podés trabajar sobre "
+                f"{plataforma.descripcion_shell()} Podés trabajar sobre "
                 "cualquier ruta del sistema. Todo lo que borre o sobrescriba archivos "
-                "(rm, mv, git reset --hard, '>') se le va a preguntar al usuario antes "
+                "se le va a preguntar al usuario antes "
                 "de correr, así que no evites esas operaciones: pedilas normalmente y "
                 "esperá la respuesta."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "comando": {"type": "string", "description": "El comando completo, con la sintaxis de bash"},
+                    "comando": {"type": "string", "description": f"El comando completo, {plataforma.sintaxis_shell()}"},
                     "directorio": {"type": "string", "description": "Directorio de trabajo. Default: el HOME del usuario"},
                     "timeout": {"type": "integer", "description": f"Segundos antes de cortar. Default {TIMEOUT_DEFAULT}, máximo {TIMEOUT_MAXIMO}"}
                 },

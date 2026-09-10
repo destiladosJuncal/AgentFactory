@@ -10,11 +10,11 @@ from core.memoria import Memoria
 
 class AgenteCodigo:
     def __init__(self, config_path: str):
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             self.config = json.load(f)
 
         try:
-            with open('tests/casos_prueba.json', 'r') as f:
+            with open('tests/casos_prueba.json', 'r', encoding='utf-8') as f:
                 self.tests = json.load(f)
         except Exception:
             self.tests = []

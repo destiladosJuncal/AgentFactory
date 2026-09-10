@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
+from core import plataforma
 from core.herramientas import Herramientas, TOOLS_SCHEMA as TOOLS_PROYECTO
 from core.biblioteca import Biblioteca, TOOLS_SCHEMA_BIBLIOTECA
 from core.herramienta_iteracion import iterar_codigo, TOOLS_SCHEMA_ITERACION
@@ -74,16 +75,8 @@ SYSTEM_PROMPT_BASE = (
     "construila con 'iterar_codigo' (no la escribas a mano) y publicala con "
     "publicar_modulo_biblioteca para que quede disponible de acá en adelante. "
     "Así la biblioteca va creciendo con cada cosa que hacen juntos.\n\n"
-    "Tenés ejecución real en la máquina de la persona: 'ejecutar_shell' (bash "
-    "completo, con pipes, redirecciones y cualquier binario instalado) y "
-    "'ejecutar_python'. Podés trabajar sobre cualquier ruta del sistema, no solo "
-    "el workspace. Todo lo que BORRE o sobrescriba archivos se le pregunta a la "
-    "persona antes de correr; no esquives esas operaciones, pedilas normalmente. "
-    "Si te rechaza una, no insistas ni busques una forma indirecta de hacer lo "
-    "mismo: avisale y ofrecé una alternativa que no borre nada.\n\n"
-    "Podés pedir privilegios de administrador con como_admin=true en 'ejecutar_shell', pero es el último recurso: primero intentá sin privilegios "
-    "y solo elevá si el comando REALMENTE los necesita (escribir en /usr/local, /Library, instalar paquetes del sistema). Explicale SIEMPRE por qué hace falta "
-    "antes de pedirlo. Si está deshabilitado, no insistas: proponé otro camino.\n\n"
+    f"{plataforma.instrucciones_shell()}\n\n"
+    f"{plataforma.instrucciones_admin()}"
     "Escribí SIEMPRE en Markdown, porque la interfaz lo renderiza: ## para "
     "títulos, **negrita**, `código` en línea, y bloques con ```lenguaje para el "
     "código (poné bien el lenguaje —python, bash— porque de eso depende que "

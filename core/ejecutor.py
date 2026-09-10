@@ -3,8 +3,9 @@ import tempfile
 import os
 import time
 import importlib.util
-import sys
 from typing import Dict, Any, List
+
+from core import interprete
 
 
 MAX_TRACEBACK_CHARS = 1_500
@@ -116,7 +117,7 @@ class Ejecutor:
     def _ejecutar_simple(self, archivo: str) -> Dict:
         try:
             resultado = subprocess.run(
-                [sys.executable, archivo],
+                [interprete.interprete(), archivo],
                 capture_output=True,
                 text=True,
                 timeout=5

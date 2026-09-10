@@ -21,25 +21,53 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core import plataforma
+
 # Nada de esto entra al zip.
 EXCLUIR_NOMBRES = {
     ".env", ".env.local", ".DS_Store", "__pycache__", ".git", ".idea",
     "venv", ".venv", "env", "runtime", "datos", "_versiones", "_conversaciones",
     "_biblioteca", "_papelera", "node_modules",
+    # Carpetas de trabajo que aparecen cuando la app corrió en esta máquina.
+    "_logs", "_proxy", "_tareas", "_paquetes", ".pytest_cache", ".mypy_cache",
+    # Salida de PyInstaller. Además de pesar cientos de MB, trae adentro el
+    # código de las dependencias, y el revisor de secretos encuentra ahí las
+    # cadenas de ejemplo de mitmproxy y se niega —con razón— a generar el zip.
+    "dist", "build", "build_pyi",
 }
 EXCLUIR_SUFIJOS = {".pyc", ".pyo", ".bak", ".log", ".sqlite", ".key", ".pem"}
 
 # Restos de instalaciones viejas que no aportan nada al paquete portable.
-EXCLUIR_ARCHIVOS = {"main.py", "iniciar_interactivo.sh", ".icon", "README.md",
+EXCLUIR_ARCHIVOS = {"main.py", "iniciar_interactivo.sh", ".icon",
+                    # README.md ya NO se excluye: pasó a ser la guía de
+                    # instalación de las dos plataformas, así que es justamente
+                    # lo que hay que llevar.
+                    # crear_zip() escribe su propio LEEME.md al final; sin
+                    # excluir el del repo, el zip queda con la entrada duplicada
+                    # y el que gana al descomprimir depende de la herramienta.
+                    "LEEME.md",
+                    # Sello de "ya instalé las dependencias". Si viaja en el
+                    # zip, la máquina que lo recibe cree que ya tiene todo
+                    # puesto, saltea pip y muere en la verificación.
                     ".requisitos-instalados"}
 
 # Sin estos la app no arranca. Se verifica ANTES de entregar el zip, porque un
 # paquete al que le falta un archivo falla recién en la máquina del otro — que
 # es exactamente lo que pasó con main_ui.py.
-ARCHIVOS_REQUERIDOS = ["INICIAR.command", "bootstrap.py", "main_ui.py",
-                       "requirements.txt", "core/chat.py", "core/rutas.py",
-                       "AgenteDeepSeek.app/Contents/MacOS/AgenteDeepSeek",
-                       "AgenteDeepSeek.app/Contents/Resources/AppIcon.icns"]
+#
+# La lista se partió en común + por sistema. Antes exigía los archivos del
+# bundle .app de macOS, que no existen en este árbol: `crear_zip()` devolvía
+# "al paquete le faltan archivos" SIEMPRE, en cualquier sistema. La ruta del
+# zip portable estaba rota de entrada.
+REQUERIDOS_COMUNES = ["bootstrap.py", "main_ui.py", "requirements.txt",
+                      "core/chat.py", "core/rutas.py", "core/plataforma.py"]
+
+# Los arrancadores de cada sistema. Se piden los dos: un paquete tiene que
+# poder abrirse tanto en la Mac como en Windows, que es el punto de que la app
+# sea portable.
+REQUERIDOS_ARRANQUE = ["INICIAR.command", "INICIAR.bat"]
+
+ARCHIVOS_REQUERIDOS = REQUERIDOS_COMUNES + REQUERIDOS_ARRANQUE
 
 # Formas típicas de credenciales. Se buscan en el contenido de lo que se va a
 # comprimir, no en los nombres.
@@ -59,7 +87,7 @@ def _se_excluye(ruta: Path, raiz: Path) -> bool:
     relativa = ruta.relative_to(raiz)
     if any(parte in EXCLUIR_NOMBRES for parte in relativa.parts):
         return True
-    if str(relativa) in EXCLUIR_ARCHIVOS:
+    if relativa.as_posix() in EXCLUIR_ARCHIVOS:
         return True
     return ruta.suffix.lower() in EXCLUIR_SUFIJOS
 
@@ -70,7 +98,11 @@ def revisar_completitud(archivos: List[Path], raiz: Path) -> List[str]:
     Dos controles: los archivos de arranque, y que cada 'from core.X import'
     tenga su módulo adentro. El segundo es el que evita que esto se repita
     cuando agreguemos un módulo nuevo y me olvide de la lista."""
-    presentes = {str(a.relative_to(raiz)) for a in archivos}
+    # as_posix() y no str(): en Windows str(Path('core/chat.py')) da
+    # 'core\\chat.py' y no coincidiría nunca con la lista de requeridos, que
+    # está escrita con '/'. Sin esto, el control da que faltan TODOS los
+    # módulos de core y el zip no se genera jamás en Windows.
+    presentes = {a.relative_to(raiz).as_posix() for a in archivos}
     faltan = [r for r in ARCHIVOS_REQUERIDOS if r not in presentes]
 
     importados = set()
@@ -151,7 +183,12 @@ def crear_zip(destino: Path, raiz: Path = None, forzar: bool = False) -> Dict[st
         with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as z:
             for archivo in archivos:
                 interno = Path(raiz.name) / archivo.relative_to(raiz)
-                info = zipfile.ZipInfo(str(interno))
+                # as_posix() obligatorio: el formato ZIP especifica '/' como
+                # separador. Armado en Windows con str() quedarían entradas con
+                # '\', y al descomprimir en macOS o Linux saldrían archivos
+                # llamados literalmente "AgentFactory\core\chat.py", todos
+                # sueltos en la raíz.
+                info = zipfile.ZipInfo(interno.as_posix())
                 # zipfile NO preserva permisos: sin esto, INICIAR.command sale
                 # del zip sin bit de ejecución y el doble clic no hace nada.
                 modo = archivo.stat().st_mode
@@ -233,6 +270,8 @@ def construir_app(destino: Path, raiz: Path = None, icono: Path = None) -> Dict[
     archivos sueltos. El contenido es el mismo y pasa por los mismos controles
     de completitud y de credenciales.
     """
+    if not plataforma.ES_MAC:
+        return {"error": "El .app y el .dmg se arman con ditto y hdiutil, que solo existen en macOS. En Windows usa el paquete portable (.zip)."}
     import shutil
     import subprocess
     from core.rutas import dir_app
@@ -287,6 +326,8 @@ def construir_app(destino: Path, raiz: Path = None, icono: Path = None) -> Dict[
 def construir_dmg(destino: Path, app: Path) -> Dict[str, Any]:
     """Empaqueta el .app en un disco de instalación, que es como se distribuye
     una app de Mac: se abre, se arrastra a Aplicaciones y listo."""
+    if not plataforma.ES_MAC:
+        return {"error": "El .app y el .dmg se arman con ditto y hdiutil, que solo existen en macOS. En Windows usa el paquete portable (.zip)."}
     import shutil
     import subprocess
     import tempfile
@@ -315,60 +356,78 @@ def construir_dmg(destino: Path, app: Path) -> Dict[str, Any]:
     return {"dmg": str(destino), "bytes": destino.stat().st_size}
 
 
-LEEME = """# AgenteDeepSeek — portable
+LEEME = """# AgentFactory - portable
 
-Este paquete trae **solo el código**. No incluye claves ni conversaciones:
+Este paquete trae **solo el codigo**. No incluye claves ni conversaciones:
 cuando lo abras, vas a configurar tus propias API keys desde la app.
+
+**No hace falta tener Python instalado.** Si esta computadora no tiene uno
+usable, el arrancador se baja uno y lo deja adentro de esta misma carpeta. No
+instala nada en el sistema ni pide contrasena de administrador: si borras la
+carpeta, no queda rastro.
+
+## Windows 10 / 11
+
+1. Descomprimi el zip **entero** en una carpeta tuya
+   (por ejemplo `C:\\Users\\<vos>\\AgentFactory`).
+2. Doble clic en **INICIAR.bat**.
+
+La primera vez se abre una ventana negra mostrando la preparacion: baja Python
+(~30 MB) e instala las dependencias. Tarda un par de minutos y necesita
+internet. Cuando termina, la app abre sola y la ventana negra se cierra. Los
+arranques siguientes son directos.
+
+Dos avisos esperables la primera vez:
+
+  - **"Windows protegio tu PC"** (SmartScreen). Es porque el archivo no esta
+    firmado. Clic en *Mas informacion* -> *Ejecutar de todas formas*.
+  - Si descomprimiste con el Explorador y el `.bat` no arranca, hace clic
+    derecho sobre el -> *Propiedades* -> marca **Desbloquear** -> Aceptar.
+
+Importante: descomprimi **antes** de ejecutar. Si haces doble clic en el `.bat`
+desde adentro del zip, Windows lo corre en una carpeta temporal y la
+instalacion se pierde.
+
+El `python.exe` que Windows trae en el PATH **no es Python**: es un atajo que
+abre la Microsoft Store. El arrancador lo detecta y no lo usa.
+
+Para ver el detalle de un arranque que falla, corre `INICIAR.bat` desde una
+consola, o mira el log en `%USERPROFILE%\\tmp\\agentfactory\\_logs\\ui.log`.
 
 ## macOS
 
-1. Abrí el `.dmg`.
-2. Arrastrá **AgenteDeepSeek** (la ballena) a la carpeta Aplicaciones.
-3. Doble clic para abrirla.
+1. Descomprimi el zip.
+2. Doble clic en **INICIAR.command**.
 
-La **primera vez** se abre una Terminal mostrando la preparación del entorno:
-baja Python (~24 MB) e instala las dependencias. Tarda menos de un minuto y
-necesita internet. Cuando termina, la app abre sola. Los arranques siguientes
-son directos y sin Terminal.
+La primera vez macOS va a decir que no puede verificar al desarrollador: la app
+no esta firmada con un Apple Developer ID. Para abrirla:
 
-La primera vez macOS va a decir que no puede verificar al desarrollador. Es
-esperable: la app no está firmada con un Apple Developer ID. Para abrirla:
-
-  · Clic derecho sobre **AgenteDeepSeek.app** → **Abrir** → Abrir.
-  · Si macOS no ofrece "Abrir": Ajustes del Sistema → Privacidad y
-    seguridad → bajar hasta el aviso → "Abrir igualmente".
+  - Clic derecho sobre **INICIAR.command** -> **Abrir** -> Abrir.
+  - Si macOS no ofrece "Abrir": Ajustes del Sistema -> Privacidad y
+    seguridad -> bajar hasta el aviso -> "Abrir igualmente".
 
 O desde la Terminal, una sola vez:
 
     xattr -dr com.apple.quarantine "<carpeta descomprimida>"
 
-El primer arranque crea el entorno e instala las dependencias: tarda un minuto
-y necesita internet. Los arranques siguientes son inmediatos.
-
-## Requisitos
-
-  · Mac con Apple Silicon (M1 o posterior)
-  · Conexión a internet la primera vez
-
-**No hace falta tener Python instalado.** Si la Mac no tiene uno usable, el
-arrancador se baja uno (~24 MB) y lo deja adentro de esta misma carpeta. No
-instala nada en el sistema ni pide contraseña: si borrás la carpeta, no queda
-rastro.
-
 Aviso: `/usr/bin/python3` que trae macOS **no es Python**, es un atajo que abre
 el instalador de las herramientas de desarrollo de Apple. El arrancador lo
 detecta y no lo usa.
 
+## Requisitos
+
+  - Windows 10 (1803 o posterior) / 11 de 64 bits, o Mac con Apple Silicon
+  - Conexion a internet la primera vez
+
 ## Tus datos
 
-La app se instala sola en `~/AgenteDeepSeek/` la primera vez que la abrís, y
-ahí quedan el intérprete de Python y las dependencias. Reemplazar la app por
-una versión nueva no toca esa carpeta ni te obliga a bajar Python de nuevo.
+Las conversaciones, tareas y la biblioteca se guardan **fuera** de esta
+carpeta:
 
-Las conversaciones, proyectos y la biblioteca se guardan en:
+    Windows   %USERPROFILE%\\tmp\\agentfactory\\
+    macOS     ~/tmp/agentfactory/
 
-    ~/tmp/agent_code/
-
-Las API keys van en `~/tmp/agent_code/.env`, fuera de la carpeta de la app, así
-que si volvés a compartir el zip no viajan con él.
+Las API keys van en el `.env` de esa carpeta, no en la del codigo, asi que si
+volves a compartir el zip no viajan con el. Reemplazar esta carpeta por una
+version nueva de la app no toca tus datos.
 """

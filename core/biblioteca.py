@@ -16,13 +16,14 @@ su propio registro; no ejecuta nada por sí misma.
 import json
 import re
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from core.proyectos import AGENT_CODE_DIR
+
+from core import interprete
 
 BIBLIOTECA_DIR = AGENT_CODE_DIR / "_biblioteca"
 MAX_MODULO_CHARS = 50_000
@@ -199,7 +200,7 @@ class Biblioteca:
             script.write_text(runner, encoding='utf-8')
             try:
                 proc = subprocess.run(
-                    [sys.executable, str(script), str(archivo), funcion,
+                    [interprete.interprete(), str(script), str(archivo), funcion,
                      json.dumps(argumentos, ensure_ascii=False)],
                     capture_output=True, text=True,
                     timeout=TIMEOUT_EJECUCION, cwd=tmp,

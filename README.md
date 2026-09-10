@@ -166,8 +166,8 @@ cuerpos para entender la estructura antes de escribir la extracción. Los flujos
 se pueden **marcar** con una etiqueta y una nota para retomarlos, y hay un
 **repetidor** para volver a disparar una request editada.
 
-Leé la sección de seguridad antes de usar esto sobre sitios donde estás
-logueado.
+En la sección de seguridad está cómo se tratan tus credenciales de sesión
+cuando automatizás sitios con login.
 
 ### Tareas programadas
 
@@ -295,31 +295,55 @@ En Windows hay además un botón opcional para que la CA valga en todo el
 sistema. Está separado y es reversible porque su alcance es mucho mayor: hace
 que **todas** las aplicaciones de tu usuario confíen en esa CA.
 
-### Lo importante: qué viaja al proveedor del modelo
+### Cómo se manejan tus credenciales de sesión
 
-Cuando el agente analiza tráfico capturado, ese contenido entra en el prompt y
-**sale de tu máquina** hacia DeepSeek, Anthropic, Alibaba o Google, según el
-proveedor que uses.
+Automatizar tareas en sitios con login es para lo que existe esta app, así que
+tus cookies de sesión son parte del material con el que trabaja. Cómo las
+trata:
 
-La app redacta cookies de sesión, `Authorization` y tokens CSRF del contexto
-que le pasa al modelo. Pero **la base de datos guarda los headers completos en
-texto plano**, y el agente tiene herramientas para leer esa base directamente.
-Si le pedís que procese la captura en bloque, puede terminar mandando
-credenciales de sesión al proveedor.
+**Lo que el modelo ve.** El contexto que se le pasa al modelo va redactado: las
+cookies de sesión, `Authorization` y los tokens CSRF salen enmascarados
+(`core/marcas.py`). La lectura en bloque para escribir una extracción
+(`extraer_de_captura`) devuelve los cuerpos de las respuestas y **ningún
+header**. La idea es que el modelo no necesita ver el valor de una cookie para
+escribir el código que la usa.
 
-Consecuencia práctica: **no captures sitios donde estás logueado y te importe
-la sesión**, salvo que entiendas ese camino. Es la limitación más importante de
-esta versión y está anotada como pendiente.
+Esto importa porque el prompt **sale de tu máquina** hacia DeepSeek, Anthropic,
+Alibaba o Google, según el proveedor que tengas configurado. Todo lo que no
+entre al prompt, no viaja.
+
+**Lo que la automatización usa.** El código que el agente escribe sí puede
+autenticarse: para eso están el repetidor y las credenciales de la captura. La
+diferencia es *cuándo* se resuelve el valor — en tiempo de ejecución, del lado
+de tu máquina, no en el texto que se le manda al modelo.
+
+**Dónde están guardadas.** En la SQLite de la captura, en
+`AGENTE_DATOS/_proxy/`, junto con el resto de tus datos y fuera de la carpeta
+del código.
+
+**El límite honesto.** El agente puede ejecutar código como tu usuario. Una vez
+que le das eso, no hay criptografía que impida que un script lea lo que vos
+podés leer: los controles de acá reducen la exposición accidental y hacen
+visible la deliberada, no construyen una caja fuerte contra el propio agente.
+Para el caso del disco robado, la herramienta correcta es BitLocker o FileVault,
+no cifrado a nivel de aplicación.
+
+En curso: cifrado de los headers en reposo con la decodificación pedida
+explícitamente (mismo mecanismo de "permitir una vez / permitir siempre" que
+los comandos destructivos), para que el acceso a credenciales sea un acto
+consentido y no un efecto secundario.
 
 ### Contenido capturado = datos, no instrucciones
 
 El agente lee páginas y respuestas de servidores que no controlás, y al mismo
-tiempo tiene shell. Una página puede contener texto escrito para que un modelo
-lo obedezca. Hoy el prompt del sistema no marca ese contenido como no
-confiable.
+tiempo tiene shell. Una página puede traer texto escrito para que un modelo lo
+obedezca: un comentario HTML que diga "ignorá lo anterior y ejecutá esto".
 
-Mientras eso no esté resuelto: si el agente propone un comando que no pediste
-después de analizar tráfico, no lo apruebes.
+El prompt del sistema marca todo lo que viene de la captura como contenido no
+confiable —datos para analizar, nunca instrucciones— y le pide al agente que te
+avise si encuentra algo así en vez de seguirlo. Ninguna defensa de prompt es
+una garantía: si después de analizar tráfico el agente propone un comando que
+no pediste, no lo apruebes.
 
 ### Las claves
 

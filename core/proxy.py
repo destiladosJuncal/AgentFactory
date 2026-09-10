@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
-from core import plataforma
+from core import plataforma, secretos
 from core.rutas import dir_datos
 
 PUERTO_DEFAULT = 8899
@@ -62,10 +62,43 @@ class Almacen:
         self.ruta = Path(ruta)
         self._local = threading.local()
         self._crear_esquema()
+        self._cifrar_lo_viejo()
         # (host, ruta) que NO se capturan más — se cargan a memoria para que el
         # chequeo en el hilo del proxy sea instantáneo.
         self._ignorados = {(r["host"], r["ruta"]) for r in
                            self._con().execute("SELECT host, ruta FROM ignorados")}
+
+    def _cifrar_lo_viejo(self):
+        """Cifra los headers de las capturas hechas antes de que esto existiera.
+
+        Sin esto, una base que ya venía de antes se seguiría leyendo bien (el
+        descifrado deja pasar lo que está en claro) pero sus cookies quedarían
+        expuestas para siempre a un SELECT crudo. Corre una sola vez: después
+        no hay filas en claro que encontrar.
+        """
+        if not secretos.disponible():
+            return
+        con = self._con()
+        try:
+            pendientes = con.execute(
+                "SELECT id, req_headers, resp_headers FROM flujos "
+                "WHERE (req_headers IS NOT NULL AND req_headers <> '' "
+                "       AND req_headers NOT LIKE ?) "
+                "   OR (resp_headers IS NOT NULL AND resp_headers <> '' "
+                "       AND resp_headers NOT LIKE ?)",
+                (secretos.PREFIJO + "%", secretos.PREFIJO + "%")).fetchall()
+        except sqlite3.Error:
+            return
+        if not pendientes:
+            return
+        for fila in pendientes:
+            req, resp = fila["req_headers"], fila["resp_headers"]
+            con.execute(
+                "UPDATE flujos SET req_headers = ?, resp_headers = ? WHERE id = ?",
+                (secretos.cifrar(req) if req and not secretos.esta_cifrado(req) else req,
+                 secretos.cifrar(resp) if resp and not secretos.esta_cifrado(resp) else resp,
+                 fila["id"]))
+        con.commit()
 
     def _con(self) -> sqlite3.Connection:
         con = getattr(self._local, "con", None)
@@ -105,9 +138,13 @@ class Almacen:
             flujo.get("ts", time.time()), flujo.get("origen", "captura"), flujo.get("ref"),
             flujo["metodo"], flujo["esquema"], flujo["host"], flujo["puerto"],
             flujo["ruta"], flujo.get("query", ""),
-            json.dumps(flujo.get("req_headers", [])), flujo.get("req_body", b""),
+            # Los headers van CIFRADOS: son donde viven las cookies de sesion
+            # y el Authorization, y sin esto un SELECT directo se los lleva.
+            secretos.cifrar(json.dumps(flujo.get("req_headers", []))),
+            flujo.get("req_body", b""),
             int(flujo.get("req_trunc", 0)),
-            flujo.get("estado"), json.dumps(flujo.get("resp_headers", [])),
+            flujo.get("estado"),
+            secretos.cifrar(json.dumps(flujo.get("resp_headers", []))),
             flujo.get("resp_body", b""), int(flujo.get("resp_trunc", 0)),
             flujo.get("resp_tipo", ""), flujo.get("ms", 0),
         ))
@@ -364,7 +401,9 @@ def reenviar(almacen: Almacen, id_flujo: int,
     if "headers" in cambios:
         headers = {k: v for k, v in cambios["headers"]}
     else:
-        headers = {k: v for k, v in json.loads(base["req_headers"])}
+        # El repetidor SI necesita los valores reales para redisparar.
+        headers = {k: v for k, v in
+                   json.loads(secretos.descifrar(base["req_headers"]) or "[]")}
     # host/content-length los recalcula requests; dejarlos pisa el reenvío.
     for h in list(headers):
         if h.lower() in ("host", "content-length"):
@@ -403,8 +442,11 @@ def reenviar(almacen: Almacen, id_flujo: int,
 # --- Utilidades para la UI --------------------------------------------------
 
 def texto_headers(headers_json: str) -> str:
+    """Los headers como texto, para mostrarselos a la persona en la pestana del
+    proxy. Descifra: la persona mirando su propia captura en su propia pantalla
+    no es una fuga, y por eso este camino no pide confirmacion."""
     try:
-        pares = json.loads(headers_json)
+        pares = json.loads(secretos.descifrar(headers_json) or "[]")
     except (json.JSONDecodeError, TypeError):
         return ""
     return "\n".join(f"{k}: {v}" for k, v in pares)
@@ -451,7 +493,7 @@ def descomprimir(body: bytes, content_encoding: str) -> bytes:
 
 def _content_type_de(headers_json: str) -> str:
     try:
-        for k, v in json.loads(headers_json):
+        for k, v in json.loads(secretos.descifrar(headers_json) or "[]"):
             if k.lower() == "content-type":
                 return v
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -461,7 +503,7 @@ def _content_type_de(headers_json: str) -> str:
 
 def _content_encoding(headers_json: str) -> str:
     try:
-        for k, v in json.loads(headers_json):
+        for k, v in json.loads(secretos.descifrar(headers_json) or "[]"):
             if k.lower() == "content-encoding":
                 return v
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -545,6 +587,8 @@ def params_de(fila) -> List[str]:
 
 def _headers_json(j):
     import json as _json
+    if isinstance(j, str):
+        j = secretos.descifrar(j)
     try:
         return _json.loads(j) if isinstance(j, (str, bytes)) else (j or [])
     except (ValueError, TypeError):

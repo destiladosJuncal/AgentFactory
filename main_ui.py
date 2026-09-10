@@ -544,7 +544,8 @@ class DialogoReenvio(tk.Toplevel):
         url = f"{flujo['esquema']}://{flujo['host']}:{flujo['puerto']}{flujo['ruta']}{q}"
         lineas = [f"{flujo['metodo']} {url}"]
         try:
-            for k, v in _json.loads(flujo["req_headers"]):
+            for k, v in _json.loads(
+                    proxymod.secretos.descifrar(flujo["req_headers"]) or "[]"):
                 lineas.append(f"{k}: {v}")
         except Exception:
             pass
@@ -609,7 +610,8 @@ class DialogoReenvio(tk.Toplevel):
         import json as _json
         self.resp.insert("end", f"{f['estado']}  -  {f['resp_tipo']}\n", "l1")
         try:
-            for k, v in _json.loads(f["resp_headers"]):
+            for k, v in _json.loads(
+                    proxymod.secretos.descifrar(f["resp_headers"]) or "[]"):
                 self.resp.insert("end", f"{k}: {v}\n", "hd")
         except Exception:
             pass

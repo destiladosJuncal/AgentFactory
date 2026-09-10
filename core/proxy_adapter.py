@@ -42,6 +42,12 @@ def _headers(j) -> List[List[str]]:
     """Lista de pares [clave, valor]. Filtra entradas malformadas en la raíz —
     algunos flujos reales traen headers que no son pares [k,v]— para que ningún
     consumidor (fingerprint, cookies, content-type) tenga que crashear."""
+    # Punto UNICO donde se parsean headers guardados, asi que es donde va el
+    # descifrado: marcas.py, el matcher y el fingerprint de sesion pasan todos
+    # por aca. Lo que quedo en claro de una captura vieja vuelve igual.
+    if isinstance(j, str):
+        from core import secretos
+        j = secretos.descifrar(j)
     try:
         crudo = json.loads(j) if isinstance(j, (str, bytes)) else (j or [])
     except (json.JSONDecodeError, TypeError, ValueError):

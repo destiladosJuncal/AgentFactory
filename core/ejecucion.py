@@ -59,6 +59,27 @@ PATRONES_DESTRUCTIVOS: List[Tuple[str, str, str]] = [
     ("redirect",      r"(?<![>\d])>(?!>)\s*[^\s|&;]+",     "sobrescribe un archivo con '>'"),
 ]
 
+# --- Lectura de credenciales -----------------------------------------------
+#
+# Los headers de la captura se guardan cifrados (core/secretos.py), así que un
+# SELECT crudo devuelve bytes ilegibles: la exposición accidental ya no existe.
+# Lo que falta cubrir es el acceso DELIBERADO — que el agente vaya a buscar la
+# clave o llame al módulo que descifra.
+#
+# El control es de consentimiento, no criptográfico, y conviene tenerlo claro:
+# la inspección es estática y se puede evadir armando la ruta por pedazos o
+# haciendo un glob de la carpeta. Lo que consigue es que el camino normal pida
+# permiso y quede registrado. Y tiene un efecto útil de rebote: en el uso
+# legítimo el agente escribe el acceso derecho y el diálogo aparece; si llega
+# ofuscado, eso mismo es la señal de que algo lo está manipulando.
+PATRONES_CREDENCIALES: List[Tuple[str, str, str]] = [
+    ("credenciales", r"clave-captura\.key|core\.secretos|from\s+core\s+import[^\n]*\bsecretos\b|secretos\s*\.\s*descifrar",
+     "lee o descifra el almacén de credenciales de la captura"),
+    ("captura-cruda", r"sesion\.db|_proxy[/\\]",
+     "abre la base de la captura directamente, sin pasar por las herramientas"),
+]
+
+
 # Lo mismo del lado de Python.
 PATRONES_DESTRUCTIVOS_PY: List[Tuple[str, str, str]] = [
     ("py-rmtree",  r"\bshutil\s*\.\s*rmtree\b",                     "borra un árbol de directorios (shutil.rmtree)"),
@@ -80,6 +101,9 @@ def analizar_riesgo(texto: str, es_python: bool = False) -> List[Tuple[str, str]
     # o `robocopy /MIR` no se parecen a ninguno y pasaban SIN pedir confirmación:
     # el guard existía pero no cubría el sistema en el que estaba corriendo.
     patrones = patrones + plataforma.patrones_destructivos_del_sistema()
+    # Leer credenciales no borra nada, pero es igual de irreversible: una cookie
+    # de sesión que salió no vuelve. Va por el mismo diálogo.
+    patrones = patrones + PATRONES_CREDENCIALES
     hallazgos, vistos = [], set()
     for clave, patron, explicacion in patrones:
         if clave in vistos:

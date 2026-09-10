@@ -136,7 +136,32 @@ def _pip_instalar(requisito: str, destino: Path) -> Tuple[bool, str]:
     return True, (proc.stdout or "").strip()[-300:]
 
 
-def instalar(requisito: str, workspace=None) -> Dict[str, Any]:
+def _confirmar_instalacion(requisito: str, nombre: str, donde: str,
+                           permisos) -> Any:
+    """Le pregunta a la persona antes de traer código de terceros de PyPI.
+
+    Solo se llega aca cuando hay que instalar DE VERDAD: si el paquete ya esta
+    en el almacen compartido o en el local, instalar() corta antes y no
+    pregunta nada. Por eso la confirmacion aparece poco y cuando aparece
+    importa.
+
+    La clave es una sola para toda la conversacion ('pip'), asi que "permitir
+    siempre" habilita las instalaciones que vengan despues en esa misma
+    conversacion. Es lo pedido: cuando el agente esta armando un entorno suele
+    necesitar varios paquetes seguidos y preguntar uno por uno es ruido.
+    """
+    from core import ejecucion
+    detalle = (f"Paquete: {requisito}\n"
+               f"Destino: instalación {donde}\n\n"
+               f"Se va a ejecutar pip install, que descarga y ejecuta código de "
+               f"PyPI. Revisá que el nombre sea el que esperabas: un nombre "
+               f"parecido al de un paquete conocido puede ser otro paquete.")
+    return ejecucion.pedir_permiso_simple(
+        "pip", f"instalar el paquete '{nombre}' desde PyPI", detalle, permisos)
+
+
+def instalar(requisito: str, workspace=None,
+             permisos=None) -> Dict[str, Any]:
     """Instala un paquete reutilizando el almacén compartido siempre que se pueda.
 
     - Si ya está (compartido o local) y la versión sirve: no descarga nada.
@@ -166,6 +191,9 @@ def instalar(requisito: str, workspace=None) -> Dict[str, Any]:
             return {"error": f"'{nombre}' compartido está en {en_compartido[nombre]}, "
                              f"que no cumple '{requisito}', y no hay workspace para "
                              f"instalarlo aparte."}
+        bloqueo = _confirmar_instalacion(requisito, nombre, "local", permisos)
+        if bloqueo:
+            return bloqueo
         ok, detalle = _pip_instalar(requisito, local)
         if not ok:
             return {"error": f"No pude instalar '{requisito}' en local: {detalle}"}
@@ -175,6 +203,9 @@ def instalar(requisito: str, workspace=None) -> Dict[str, Any]:
                            f"{en_compartido[nombre]} y pediste '{requisito}'. Se "
                            f"instaló solo para esta conversación.")}
 
+    bloqueo = _confirmar_instalacion(requisito, nombre, "compartida", permisos)
+    if bloqueo:
+        return bloqueo
     ok, detalle = _pip_instalar(requisito, compartido)
     if not ok:
         return {"error": f"No pude instalar '{requisito}': {detalle}"}
@@ -195,10 +226,11 @@ def listar(workspace=None) -> Dict[str, Any]:
 
 # --- Tool para el chat ------------------------------------------------------
 
-def ejecutar_tool_paquetes(nombre: str, argumentos: dict, workspace=None) -> Dict[str, Any]:
+def ejecutar_tool_paquetes(nombre: str, argumentos: dict, workspace=None,
+                           permisos=None) -> Dict[str, Any]:
     a = argumentos or {}
     if nombre == "instalar_paquete":
-        return instalar(a.get("paquete", ""), workspace=workspace)
+        return instalar(a.get("paquete", ""), workspace=workspace, permisos=permisos)
     if nombre == "listar_paquetes":
         return listar(workspace=workspace)
     return {"error": f"Herramienta de paquetes desconocida: {nombre}"}

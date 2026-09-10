@@ -7,12 +7,35 @@ resuelve el id contra la base del proxy y devuelve el contexto REDACTADO
 (headers sin cookies de sesión ni tokens; el body del flujo bajo análisis sí,
 que es lo que se quiere ver).
 
-El agente es un planner: recibe el contexto y razona. No ejecuta nada sobre él
-—esta tool solo lee—, así que un response hostil capturado no puede componer
-una acción peligrosa a través de acá.
+## Dos cosas que este módulo NO hace, a propósito
+
+**No entrega la ruta de la base de datos.** Antes la devolvía en cada búsqueda
+y la descripción de la tool le sugería al modelo "procesá todo en bloque con
+ejecutar_python leyendo la tabla flujos". Eso esquivaba por completo la
+redacción de core/marcas.py: en la tabla los headers están completos, con las
+cookies de sesión y el Authorization, y de ahí salían derecho al proveedor del
+LLM. La lectura en bloque ahora se hace con `extraer_de_captura`, que devuelve
+los cuerpos y ningún header.
+
+**No matchea hosts por subcadena.** El filtro era `host LIKE '%sitio%'`, que
+con sitio='google.com' también traía 'google.com.ar.phish.net'. Ahora la
+comparación pasa por core/dominios.py, que usa la misma regla que el filtro de
+captura (igualdad o subdominio con punto) y la Public Suffix List. Cuando el
+nombre es ambiguo se devuelven los candidatos en vez de elegir uno: adivinar
+mal en silencio es peor que preguntar.
+
+El agente es un planner: recibe el contexto y razona. Ojo con la conclusión
+fácil de que por eso no hay riesgo — esta tool solo lee, pero el mismo modelo
+que lee tiene ejecutar_shell en el turno siguiente. Lo capturado es contenido
+no confiable y el prompt del sistema lo dice.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+# Cuánto texto de cada cuerpo se devuelve en una lectura en bloque. El tope
+# total existe para no volcar 300 respuestas enteras en el contexto.
+MAX_CHARS_POR_CUERPO = 4_000
+MAX_CHARS_TOTAL = 120_000
 
 
 def _db():
@@ -27,8 +50,42 @@ def _con(db):
     return con
 
 
+def _hosts_capturados(con) -> List[str]:
+    return [r["host"] for r in
+            con.execute("SELECT DISTINCT host FROM flujos WHERE host <> ''")]
+
+
+def _resolver_sitio(con, sitio: Optional[str]) -> Dict[str, Any]:
+    """Traduce lo que pidió el modelo a hosts concretos de la captura.
+
+    Devuelve {'hosts': [...]} para filtrar, o {'aviso': ...} con los candidatos
+    cuando no se puede decidir sin preguntar."""
+    from core import dominios
+    if not sitio:
+        return {"hosts": None}          # sin filtro de sitio
+
+    r = dominios.resolver(_hosts_capturados(con), sitio)
+    if "sitio" in r:
+        return {"hosts": r["hosts"], "sitio": r["sitio"]}
+
+    if r.get("candidatos"):
+        return {"aviso": (
+            f"'{sitio}' coincide con más de un sitio capturado. No elijo por vos: "
+            f"preguntale a la persona cuál de estos quiere y volvé a llamarme con "
+            f"el dominio completo."),
+            "candidatos": r["candidatos"]}
+
+    # 'candidatos' va siempre, aunque esté vacío: así el que consume esto tiene
+    # una sola forma que mirar en vez de dos.
+    return {"aviso": (f"No hay nada capturado de '{sitio}'. Estos son los sitios "
+                      f"que sí hay; preguntale a la persona si se refería a alguno."),
+            "candidatos": [],
+            "sitios": r.get("sitios", [])}
+
+
 def listar_sitios_capturados() -> Dict[str, Any]:
     """Qué sitios navegó la persona (para inferir de cuál habla sin que lo marque)."""
+    from core import dominios
     db = _db()
     if not db.exists():
         return {"sitios": [], "aviso": "Todavía no hay nada capturado. Abrí Firefox "
@@ -38,23 +95,43 @@ def listar_sitios_capturados() -> Dict[str, Any]:
         "SELECT host, COUNT(*) AS flujos, MAX(ts) AS ultima "
         "FROM flujos WHERE host <> '' GROUP BY host ORDER BY flujos DESC").fetchall()
     con.close()
-    return {"sitios": [{"sitio": r["host"], "flujos": r["flujos"], "ultima": r["ultima"]}
-                       for r in filas],
-            "db": str(db)}
+
+    # Se agrupa por dominio registrable: al modelo le sirve más "linkedin.com
+    # (3 hosts, 412 flujos)" que ver www., static. y api. como sitios distintos.
+    por_sitio: Dict[str, Dict[str, Any]] = {}
+    for r in filas:
+        d = dominios.registrable(r["host"])
+        e = por_sitio.setdefault(d, {"sitio": d, "hosts": [], "flujos": 0, "ultima": 0})
+        e["hosts"].append(r["host"])
+        e["flujos"] += r["flujos"]
+        e["ultima"] = max(e["ultima"], r["ultima"] or 0)
+
+    orden = sorted(por_sitio.values(), key=lambda e: e["flujos"], reverse=True)
+    return {"sitios": orden}
 
 
 def buscar_en_captura(sitio: str = None, texto: str = None, tipo: str = None,
                       metodo: str = None, limite: int = 40) -> Dict[str, Any]:
-    """Lista los flujos capturados que matchean (por sitio/host, texto en la
-    ruta o query, content-type, método). Devuelve metadata, no los bodies: con
-    los ids después leés un cuerpo de muestra (ver_cuerpo_flujo) o los procesás
-    en bloque con ejecutar_python leyendo la SQLite `db`."""
+    """Lista los flujos capturados que matchean. Devuelve metadata, no cuerpos:
+    con los ids después leés uno de muestra (ver_cuerpo_flujo) o los procesás
+    todos con extraer_de_captura."""
     db = _db()
     if not db.exists():
         return {"flujos": [], "aviso": "No hay captura todavía."}
+
+    con = _con(db)
+    resuelto = _resolver_sitio(con, sitio)
+    if "aviso" in resuelto:
+        con.close()
+        return resuelto
+
     cond, args = ["host <> ''"], []
-    if sitio:
-        cond.append("host LIKE ?"); args.append(f"%{sitio}%")
+    if resuelto["hosts"] is not None:
+        # Lista explícita de hosts, no LIKE: es lo que evita arrastrar dominios
+        # parecidos o lookalikes.
+        marcas_sql = ",".join("?" for _ in resuelto["hosts"])
+        cond.append(f"host IN ({marcas_sql})")
+        args += resuelto["hosts"]
     if texto:
         cond.append("(ruta LIKE ? OR query LIKE ?)"); args += [f"%{texto}%", f"%{texto}%"]
     if tipo:
@@ -65,7 +142,7 @@ def buscar_en_captura(sitio: str = None, texto: str = None, tipo: str = None,
         lim = max(1, min(int(limite), 200))
     except (TypeError, ValueError):
         lim = 40
-    con = _con(db)
+
     filas = con.execute(
         "SELECT id, ts, metodo, host, ruta, query, estado, resp_tipo, "
         "length(resp_body) AS resp_len FROM flujos WHERE " + " AND ".join(cond) +
@@ -73,12 +150,83 @@ def buscar_en_captura(sitio: str = None, texto: str = None, tipo: str = None,
     con.close()
     return {
         "total": len(filas),
-        "db": str(db),
+        "sitio": resuelto.get("sitio"),
         "flujos": [{"id": r["id"], "metodo": r["metodo"], "sitio": r["host"],
                     "ruta": r["ruta"], "query": (r["query"] or "")[:200],
                     "estado": r["estado"], "tipo": r["resp_tipo"],
                     "bytes": r["resp_len"], "ts": r["ts"]} for r in filas],
     }
+
+
+def extraer_de_captura(sitio: str = None, texto: str = None, tipo: str = None,
+                       metodo: str = None, limite: int = 30,
+                       max_chars: int = MAX_CHARS_POR_CUERPO) -> Dict[str, Any]:
+    """Cuerpos de muchos flujos de una sola vez, para escribir la extracción.
+
+    Reemplaza al viejo camino de "leé la SQLite con ejecutar_python": da la
+    misma potencia (procesar decenas de respuestas en una llamada) sin exponer
+    los headers, que es donde viven las cookies de sesión.
+    """
+    from core.proxy import cuerpo_legible
+    db = _db()
+    if not db.exists():
+        return {"flujos": [], "aviso": "No hay captura todavía."}
+
+    con = _con(db)
+    resuelto = _resolver_sitio(con, sitio)
+    if "aviso" in resuelto:
+        con.close()
+        return resuelto
+
+    cond, args = ["host <> ''"], []
+    if resuelto["hosts"] is not None:
+        marcas_sql = ",".join("?" for _ in resuelto["hosts"])
+        cond.append(f"host IN ({marcas_sql})")
+        args += resuelto["hosts"]
+    if texto:
+        cond.append("(ruta LIKE ? OR query LIKE ?)"); args += [f"%{texto}%", f"%{texto}%"]
+    if tipo:
+        cond.append("resp_tipo LIKE ?"); args.append(f"%{tipo}%")
+    if metodo:
+        cond.append("metodo = ?"); args.append(metodo.upper())
+
+    try:
+        lim = max(1, min(int(limite), 100))
+    except (TypeError, ValueError):
+        lim = 30
+    try:
+        cap = max(200, min(int(max_chars), 20_000))
+    except (TypeError, ValueError):
+        cap = MAX_CHARS_POR_CUERPO
+
+    filas = con.execute(
+        "SELECT id, metodo, host, ruta, query, estado, resp_tipo, req_body, resp_body "
+        "FROM flujos WHERE " + " AND ".join(cond) +
+        " ORDER BY ts DESC LIMIT ?", (*args, lim)).fetchall()
+    con.close()
+
+    salida, usado, truncados = [], 0, 0
+    for r in filas:
+        if usado >= MAX_CHARS_TOTAL:
+            truncados += 1
+            continue
+        cuerpo = cuerpo_legible(r["resp_body"], r["resp_tipo"] or "")
+        recorte = cuerpo["texto"][:cap]
+        usado += len(recorte)
+        salida.append({
+            "id": r["id"], "metodo": r["metodo"], "sitio": r["host"],
+            "ruta": r["ruta"], "query": (r["query"] or "")[:200],
+            "estado": r["estado"], "tipo": r["resp_tipo"],
+            "binario": cuerpo["binario"],
+            "resp_body": recorte + ("… (truncado)" if len(cuerpo["texto"]) > cap else ""),
+        })
+
+    resultado = {"total": len(salida), "sitio": resuelto.get("sitio"), "flujos": salida}
+    if truncados:
+        resultado["aviso"] = (f"Corté en {MAX_CHARS_TOTAL} caracteres: quedaron "
+                              f"{truncados} flujos sin traer. Afiná los filtros o "
+                              f"bajá max_chars y volvé a pedir.")
+    return resultado
 
 
 def ver_cuerpo_flujo(flujo_id: int, max_chars: int = 4000, redactar: bool = True) -> Dict[str, Any]:
@@ -138,6 +286,10 @@ def ejecutar_tool_proxy(nombre: str, argumentos: dict, redactar: bool = True) ->
     if nombre == "buscar_en_captura":
         return buscar_en_captura(a.get("sitio"), a.get("texto"), a.get("tipo"),
                                  a.get("metodo"), a.get("limite", 40))
+    if nombre == "extraer_de_captura":
+        return extraer_de_captura(a.get("sitio"), a.get("texto"), a.get("tipo"),
+                                  a.get("metodo"), a.get("limite", 30),
+                                  a.get("max_chars", MAX_CHARS_POR_CUERPO))
     if nombre == "ver_cuerpo_flujo":
         return ver_cuerpo_flujo(a.get("flujo_id"), a.get("max_chars", 4000),
                                 redactar=redactar)
@@ -181,11 +333,12 @@ TOOLS_SCHEMA_PROXY: List[Dict[str, Any]] = [
         "function": {
             "name": "listar_sitios_capturados",
             "description": (
-                "Qué sitios navegó la persona (host + cuántos flujos + última vez). "
-                "Úsalo PRIMERO cuando te hable de un sitio por su nombre "
-                "('buscá en Google', 'los trabajos de LinkedIn') para inferir el "
-                "host real sin que lo marque. Si hay más de uno que encaja o "
-                "ninguno, preguntale sobre qué sitio querés que trabaje."),
+                "Qué sitios navegó la persona, agrupados por dominio (con sus "
+                "hosts, cuántos flujos y la última vez). Úsalo PRIMERO cuando te "
+                "hable de un sitio por su nombre ('buscá en Google', 'los "
+                "trabajos de LinkedIn'). Si el nombre da para más de un sitio, "
+                "mostrale la lista y preguntale cuál: NO elijas por tu cuenta, "
+                "porque trabajar sobre el dominio equivocado pasa inadvertido."),
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -194,19 +347,48 @@ TOOLS_SCHEMA_PROXY: List[Dict[str, Any]] = [
         "function": {
             "name": "buscar_en_captura",
             "description": (
-                "Busca flujos capturados por sitio/host, texto en la ruta o query, "
+                "Busca flujos capturados por sitio, texto en la ruta o query, "
                 "content-type o método. Devuelve metadata (id, método, ruta, "
-                "status, tipo, bytes) y la ruta de la SQLite `db`, NO los bodies. "
-                "Con esos ids leés una muestra (ver_cuerpo_flujo) o procesás todo "
-                "en bloque con ejecutar_python leyendo la tabla `flujos` de esa db."),
+                "status, tipo, bytes), no los cuerpos. En 'sitio' pasá el dominio "
+                "(ej: 'linkedin.com'); se matchea el dominio y sus subdominios, no "
+                "por subcadena. Si el nombre es ambiguo te devuelvo los candidatos "
+                "para que le preguntes a la persona. Con los ids leés uno de "
+                "muestra con ver_cuerpo_flujo, o traés todos los cuerpos juntos "
+                "con extraer_de_captura."),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "sitio": {"type": "string", "description": "host o parte (ej: 'linkedin')"},
+                    "sitio": {"type": "string", "description": "dominio (ej: 'linkedin.com')"},
                     "texto": {"type": "string", "description": "texto en la ruta o query"},
                     "tipo": {"type": "string", "description": "content-type (ej: 'json', 'html')"},
                     "metodo": {"type": "string", "description": "GET, POST, …"},
                     "limite": {"type": "integer", "description": "máx resultados (default 40)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "extraer_de_captura",
+            "description": (
+                "Los CUERPOS de varios flujos capturados de una sola llamada, "
+                "para procesarlos en bloque y escribir la extracción. Mismos "
+                "filtros que buscar_en_captura. Es el camino para trabajar sobre "
+                "muchas respuestas a la vez; no intentes leer la base de datos "
+                "del proxy por tu cuenta. No devuelve headers: si necesitás "
+                "razonar sobre autenticación, pedile a la persona que active la "
+                "opción de incluir los valores de sesión."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sitio": {"type": "string", "description": "dominio (ej: 'linkedin.com')"},
+                    "texto": {"type": "string", "description": "texto en la ruta o query"},
+                    "tipo": {"type": "string", "description": "content-type (ej: 'json')"},
+                    "metodo": {"type": "string", "description": "GET, POST, …"},
+                    "limite": {"type": "integer", "description": "máx flujos (default 30, tope 100)"},
+                    "max_chars": {"type": "integer",
+                                  "description": f"máx caracteres por cuerpo (default {MAX_CHARS_POR_CUERPO})"},
                 },
             },
         },

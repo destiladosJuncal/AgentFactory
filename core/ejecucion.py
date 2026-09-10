@@ -328,6 +328,38 @@ def _pedir_permiso(texto: str, es_python: bool, cwd: Path,
             "rechazado_por_el_usuario": True}
 
 
+def pedir_permiso_simple(clave: str, resumen: str, detalle: str,
+                         permisos: Optional[set] = None) -> Optional[Dict[str, Any]]:
+    """Confirmación para una operación que no es un comando de shell.
+
+    Existe para reusar el mismo mecanismo —y el mismo diálogo— en operaciones
+    que hay que confirmar pero no pasan por analizar_riesgo(). La primera es la
+    instalación de paquetes: el agente puede traer código de terceros de PyPI,
+    y hasta ahora lo hacía sin que nadie lo viera.
+
+    Mismo contrato que _pedir_permiso: None si se puede seguir, un dict de
+    error si hay que abortar. 'siempre' se recuerda por conversación y no se
+    persiste a disco."""
+    aprobadas = _APROBADAS_SIEMPRE if permisos is None else permisos
+    if clave in aprobadas:
+        return None
+
+    if CONFIRMADOR is None:
+        return {"error": (f"Bloqueado: {resumen}. No hay forma de pedirte "
+                          f"confirmación en este modo."),
+                "requeria_confirmacion": True}
+
+    decision = CONFIRMADOR(resumen, detalle, clave)
+    if decision == "siempre":
+        aprobadas.add(clave)
+        return None
+    if decision == "permitir":
+        return None
+    return {"error": f"El usuario no autorizó esta operación ({resumen}). "
+                     f"No se instaló ni ejecutó nada.",
+            "rechazado_por_el_usuario": True}
+
+
 # --- Ejecución -------------------------------------------------------------
 
 def _resultado(proc, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

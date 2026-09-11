@@ -747,6 +747,16 @@ class AgenteUI(BASE_TK):
         ttk.Button(cabecera, text="🦊 Abrir Firefox",
                    command=self.abrir_firefox_proxy).pack(side="left", padx=(14, 0))
 
+        # Cuánto ocupa la captura en disco + un botón para vaciarla. La base de
+        # flujos crece rápido navegando (llega a cientos de MB); tener el número
+        # a la vista y el borrado a un clic evita que se vaya de las manos.
+        ttk.Button(cabecera, text="🧹 Vaciar captura",
+                   command=self.vaciar_captura).pack(side="left", padx=(6, 0))
+        self.label_captura = tk.Label(cabecera, text="", bg=COLOR_PANEL,
+                                      fg=COLOR_TENUE, font=(FUENTE_UI, 10))
+        self.label_captura.pack(side="left", padx=(8, 0))
+        self._refrescar_tamano_captura()
+
         # Probamos el proveedor configurado (DeepSeek o Claude) para mostrar cuál
         # está activo de verdad, no solo cuál está pedido en el .env.
         proveedor = crear_proveedor()
@@ -954,21 +964,12 @@ class AgenteUI(BASE_TK):
         self.entrada.bind("<KeyPress>", self._al_teclear)
         self.entrada.bind("<Shift-Return>", lambda _e: None)
 
-        # Escribí '@' y aparecen los sitios que capturaste, para que en el
-        # prompt quede el dominio EXACTO en vez de un nombre que el modelo
-        # tenga que adivinar. Las flechas y Escape se le delegan acá abajo
-        # porque compiten con las del cuadro de texto.
-        self.completador_sitios = autocompletado.CompletadorSitios(
-            self.entrada, proveedor=self._sitios_para_completar,
-            fuente=(FUENTE_MONO, 11))
-        self.entrada.bind("<Up>", lambda _e: "break"
-                          if self.completador_sitios.al_flecha(-1) else None)
-        self.entrada.bind("<Down>", lambda _e: "break"
-                          if self.completador_sitios.al_flecha(1) else None)
-        self.entrada.bind("<Escape>", lambda _e: "break"
-                          if self.completador_sitios.al_escape() else None)
-        self.entrada.bind("<Tab>", lambda _e: "break"
-                          if self.completador_sitios.al_enter() else None)
+        # Autocompletado de sitios con '@' DESACTIVADO a pedido del usuario:
+        # se sentía inestable al escribir. Se deja en None (no se instancia el
+        # CompletadorSitios ni se enganchan las teclas de navegación) para que
+        # las flechas, Escape y Tab vuelvan a comportarse como en cualquier
+        # cuadro de texto. Para reactivarlo, volver a crear el completador acá.
+        self.completador_sitios = None
 
         columna_botones = ttk.Frame(entrada_frame)
         columna_botones.pack(side="left", padx=(8, 0), fill="y")
@@ -1050,6 +1051,47 @@ class AgenteUI(BASE_TK):
             return "break"
         self.enviar_mensaje()
         return "break"  # Enter envía; Shift+Enter hace salto de línea
+
+    def _refrescar_tamano_captura(self):
+        """Actualiza el label de tamaño de la captura y se reprograma. Cada 3 s
+        alcanza: no hace falta verlo latir tecla a tecla, pero sí que baje en
+        cuanto vaciás y que suba mientras navegás."""
+        try:
+            from core import proxy_tool
+            bytes_ = proxy_tool.tamano_captura()
+            texto = f"📦 captura: {formato.tamano(bytes_)}" if bytes_ else "📦 captura: vacía"
+        except Exception:
+            texto = ""
+        if getattr(self, "label_captura", None) is not None:
+            try:
+                self.label_captura.configure(text=texto)
+            except tk.TclError:
+                return
+        self.after(3000, self._refrescar_tamano_captura)
+
+    def vaciar_captura(self):
+        """Borra todos los flujos capturados, tras confirmar."""
+        from core import proxy_tool
+        bytes_ = proxy_tool.tamano_captura()
+        if not bytes_:
+            messagebox.showinfo("Vaciar captura", "La captura ya está vacía.", parent=self)
+            return
+        if not messagebox.askokcancel(
+                "Vaciar captura",
+                f"Se van a borrar TODOS los flujos capturados ({formato.tamano(bytes_)}).\n\n"
+                "Esto no toca tus conversaciones ni tareas, solo lo que navegaste "
+                "con Firefox. No se puede deshacer.\n\n¿Vaciar?",
+                icon="warning", parent=self):
+            return
+        r = proxy_tool.vaciar_captura()
+        self._refrescar_tamano_captura()
+        if r.get("ok"):
+            messagebox.showinfo(
+                "Vaciar captura",
+                f"Listo: se borraron {r.get('borrados', 0)} flujos.", parent=self)
+        else:
+            messagebox.showerror(
+                "Vaciar captura", f"No pude vaciar del todo:\n{r.get('error')}", parent=self)
 
     def _sitios_para_completar(self):
         """Los sitios capturados, para la lista de autocompletado.

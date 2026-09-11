@@ -50,6 +50,49 @@ def _con(db):
     return con
 
 
+def tamano_captura() -> int:
+    """Bytes que ocupa la captura en disco: la SQLite más sus archivos WAL/SHM
+    (con journal_mode=WAL el grueso de lo recién capturado vive en -wal hasta el
+    checkpoint, así que ignorarlo daría un número que no se mueve al navegar)."""
+    db = _db()
+    total = 0
+    for sufijo in ("", "-wal", "-shm"):
+        p = db.with_name(db.name + sufijo)
+        try:
+            if p.exists():
+                total += p.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def vaciar_captura() -> Dict[str, Any]:
+    """Borra todos los flujos capturados y devuelve el espacio al disco.
+
+    Best-effort con el proxy corriendo: el DELETE y el checkpoint andan aunque
+    mitmproxy esté escribiendo; el VACUUM puede fallar si hay otra conexión
+    activa, y en ese caso no pasa nada (las filas ya no están, el archivo se
+    encoge en el próximo checkpoint)."""
+    db = _db()
+    if not db.exists():
+        return {"ok": True, "borrados": 0}
+    con = _con(db)
+    try:
+        n = con.execute("SELECT COUNT(*) FROM flujos").fetchone()[0]
+        con.execute("DELETE FROM flujos")
+        con.commit()
+        try:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            con.execute("VACUUM")
+        except Exception:
+            pass
+        return {"ok": True, "borrados": int(n)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        con.close()
+
+
 def _hosts_capturados(con) -> List[str]:
     return [r["host"] for r in
             con.execute("SELECT DISTINCT host FROM flujos WHERE host <> ''")]

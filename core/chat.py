@@ -23,6 +23,7 @@ from core.paquetes import (TOOLS_SCHEMA_PAQUETES, ejecutar_tool_paquetes)
 from core.procesador import ejecutar_tool_procesador, TOOLS_SCHEMA_PROCESADOR
 from core.proxy_tool import ejecutar_tool_proxy, TOOLS_SCHEMA_PROXY
 from core.tarea_tool import ejecutar_tool_tarea, TOOLS_SCHEMA_TAREA
+from core.redactor import redactar as _redactar_salida
 from core.ejecucion import ejecutar_tool_ejecucion, TOOLS_SCHEMA_EJECUCION
 from core.utils_tools import resumen_tool, resumen_args
 from core.proveedores import crear_proveedor, ErrorProveedor
@@ -568,7 +569,7 @@ class ConversacionChat:
                             entrada_tool = {
                                 "role": "tool",
                                 "tool_call_id": tc.id,
-                                "content": json.dumps(resultado, ensure_ascii=False)[:4000],
+                                "content": _redactar_salida(json.dumps(resultado, ensure_ascii=False))[:4000],
                                 "ts": _ahora()
                             }
                             resultados_de_la_vuelta.append(resultado)
@@ -582,7 +583,7 @@ class ConversacionChat:
                         entrada_tool = {
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": json.dumps(resultado, ensure_ascii=False)[:4000],
+                            "content": _redactar_salida(json.dumps(resultado, ensure_ascii=False))[:4000],
                             "ts": _ahora()
                         }
                         resultados_de_la_vuelta.append(resultado)

@@ -30,9 +30,16 @@ las del cuadro de texto (Enter manda el mensaje). Los métodos `al_enter`,
 `al_flecha` y `al_escape` devuelven True si consumieron la tecla.
 """
 
+import time
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, List, Optional
+
+# Cada consulta de sitios pega a la SQLite de la captura (un GROUP BY que sobre
+# una base grande tarda cientos de ms). Como se dispara en cada tecla, sin esto
+# la UI se congela mientras escribís '@algo'. Se cachea la lista unos segundos:
+# la captura cambia mientras la app está abierta, pero no entre teclazo y teclazo.
+TTL_CACHE_SEGUNDOS = 10.0
 
 # Cuántas opciones se muestran de una. Más que esto no se lee: se sigue
 # escribiendo para filtrar.
@@ -51,6 +58,8 @@ class CompletadorSitios:
         self.lista: Optional[tk.Listbox] = None
         self.opciones: List[str] = []
         self._inicio: Optional[str] = None   # índice Tk donde arranca el '@'
+        self._cache: Optional[List[dict]] = None
+        self._cache_ts = 0.0
 
         texto.bind("<KeyRelease>", self._al_soltar_tecla, add="+")
         # Si el foco se va, la lista no puede quedar flotando sobre la ventana.
@@ -137,11 +146,20 @@ class CompletadorSitios:
         self._inicio = inicio
         self._refrescar(escrito)
 
+    def _sitios(self) -> List[dict]:
+        """Sitios capturados, con caché de TTL_CACHE_SEGUNDOS: así escribir una
+        mención no dispara una consulta por tecla."""
+        ahora = time.monotonic()
+        if self._cache is None or (ahora - self._cache_ts) > TTL_CACHE_SEGUNDOS:
+            try:
+                self._cache = self.proveedor() or []
+            except Exception:
+                self._cache = []
+            self._cache_ts = ahora
+        return self._cache
+
     def _candidatos(self, escrito: str) -> List[str]:
-        try:
-            sitios = self.proveedor() or []
-        except Exception:
-            return []
+        sitios = self._sitios()
 
         etiquetas, vistos = [], set()
         filtro = (escrito or "").lower()
@@ -213,8 +231,11 @@ class CompletadorSitios:
         """Debajo del cursor. Si no cabe abajo, arriba."""
         if self.popup is None:
             return
+        # Se ancla al '@' (self._inicio), no al cursor: si se anclara al cursor,
+        # la lista se correría a la derecha con cada letra y se vería temblando.
+        ancla = self._inicio or "insert"
         try:
-            caja = self.texto.bbox("insert")
+            caja = self.texto.bbox(ancla)
         except tk.TclError:
             caja = None
         if caja:

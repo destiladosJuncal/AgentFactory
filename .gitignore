@@ -46,3 +46,6 @@ desktop.ini
 # Build del .app de macOS (se regenera con construir_app.sh)
 AgentFactory.app/
 examples/
+
+# Config local de Claude Code (no versionar)
+.claude/

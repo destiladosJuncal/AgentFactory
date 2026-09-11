@@ -173,11 +173,27 @@ cuando automatizás sitios con login.
 
 El agente no puede despertarse solo: lo despierta el sistema. Cada tarea se
 traduce en un LaunchAgent (macOS) o una tarea del Programador de tareas
-(Windows) que, a la hora indicada, le manda un prompt guardado a una
-conversación. No hace falta que la app esté abierta.
+(Windows) que, a la hora indicada o **cada N minutos**, corre sin que la app
+esté abierta. No hace falta permisos de administrador en ninguna plataforma.
 
-Cada corrida queda registrada con su resultado y se ve en la pestaña **Tareas**.
-Ninguna de las dos plataformas necesita permisos de administrador.
+Hay **dos tipos de tarea**, y la diferencia importa:
+
+- **Tarea-agente**: cada corrida le manda un prompt guardado al modelo. Para lo
+  que necesita juicio o redacción en cada vuelta (resumir, decidir, escribir).
+- **Tarea-script (script-first)**: para un workflow concreto y repetible —"cada
+  10 min traeme el saldo", "todas las mañanas armá el reporte"— el agente
+  escribe y prueba **un script Python determinístico** y lo registra como tarea.
+  Ese script corre solo, **barato y sin gastar modelo**. El LLM vuelve a entrar
+  **solo** como *fallback*, cuando el script no puede determinar el próximo paso
+  (falla, o imprime una línea `ESCALAR: <motivo>`): ahí el agente lo arregla o
+  reporta. Es el modelo por defecto para tareas recurrentes: se construye una
+  vez con criterio, y después se ejecuta como código, no como conversación.
+
+El agente arma las tarea-script desde el chat con la herramienta
+`programar_tarea_script`. Cada corrida queda registrada con su resultado en la
+pestaña **Tareas**, con un semáforo de salud (✅ sana · ⏸ ausente del sistema ·
+❌ falló · 🕓 nunca corrió) y botones para **correrla ahora** (verificar sin
+esperar la agenda) y **recargarla** en el planificador.
 
 ### Historial de versiones
 
@@ -307,6 +323,15 @@ cookies de sesión, `Authorization` y los tokens CSRF salen enmascarados
 (`extraer_de_captura`) devuelve los cuerpos de las respuestas y **ningún
 header**. La idea es que el modelo no necesita ver el valor de una cookie para
 escribir el código que la usa.
+
+Encima de eso hay un **filtro de salida** (`core/redactor.py`) que tapa lo que
+`marcas.py` no atrapa: enmascara valores del `.env`, JWT, `Bearer` y
+asignaciones tipo `password=` / `clave=` en **cualquier** texto que vaya al
+modelo — incluidos los cuerpos capturados (donde puede ir una clave de login) y
+la salida de `ejecutar_shell`/`ejecutar_python` (por si un comando imprime el
+`.env`). Enmascara **valores, no estructura**: los nombres de campo, el código
+JS, los endpoints y los redirects quedan visibles, así el agente puede razonar y
+reversar un flujo; solo desaparece el valor concreto de la credencial.
 
 Esto importa porque el prompt **sale de tu máquina** hacia DeepSeek, Anthropic,
 Alibaba o Google, según el proveedor que tengas configurado. Todo lo que no

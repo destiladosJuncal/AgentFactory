@@ -1,7 +1,8 @@
 # AgentFactory
 
 Asistente conversacional de escritorio (Python + Tkinter) que corre en
-**Windows 10/11** y en **macOS** (Apple Silicon e Intel) desde el mismo código.
+**Windows 10/11**, **macOS** (Apple Silicon e Intel) y **Linux** (Debian/RHEL y
+derivados) desde el mismo código.
 
 No es un chat con un modelo y nada más. Las tres cosas que lo distinguen:
 
@@ -186,9 +187,10 @@ cuando automatizás sitios con login.
 ### Tareas programadas
 
 El agente no puede despertarse solo: lo despierta el sistema. Cada tarea se
-traduce en un LaunchAgent (macOS) o una tarea del Programador de tareas
-(Windows) que, a la hora indicada o **cada N minutos**, corre sin que la app
-esté abierta. No hace falta permisos de administrador en ninguna plataforma.
+traduce en un LaunchAgent (macOS), una tarea del Programador de tareas
+(Windows) o un timer de usuario de systemd (Linux) que, a la hora indicada o
+**cada N minutos**, corre sin que la app esté abierta. No hace falta permisos de
+administrador en ninguna plataforma.
 
 Hay **dos tipos de tarea**, y la diferencia importa:
 
@@ -248,12 +250,12 @@ en la interfaz.
 | `core/chat.py` | La conversación y el ciclo de tool calling |
 | `core/biblioteca.py` | La biblioteca compartida de módulos |
 | `core/generador.py` · `core/evaluador.py` | El motor iterativo y su puntaje |
-| `core/programador*.py` | Tareas: frente común + backend launchd / Task Scheduler |
+| `core/programador*.py` | Tareas: frente común + backend launchd / Task Scheduler / systemd |
 | `core/proxy.py` · `core/marcas.py` | Captura de tráfico, redacción y contexto |
 | `core/ejecucion.py` | Ejecución de comandos, con confirmación de lo destructivo |
 
-Detalles del port a Windows, decisiones tomadas y lo que queda pendiente:
-[`HANDOFF-WINDOWS.md`](HANDOFF-WINDOWS.md).
+Detalles de cada port, decisiones tomadas y lo que queda pendiente:
+[`HANDOFF-WINDOWS.md`](HANDOFF-WINDOWS.md) · [`HANDOFF-LINUX.md`](HANDOFF-LINUX.md).
 
 ### Dónde quedan tus datos
 
@@ -264,6 +266,7 @@ keys viven **fuera** de la carpeta del código:
 |---|---|
 | Windows | `%USERPROFILE%\tmp\agentfactory\` |
 | macOS | `~/tmp/agentfactory/` |
+| Linux | `~/tmp/agentfactory/` |
 
 Es deliberado: un `git pull` no toca tus datos, y publicar la carpeta del
 proyecto no se lleva tus claves. Se cambia con la variable `AGENTE_DATOS`.
@@ -274,7 +277,7 @@ proyecto no se lleva tus claves. Se cambia con la variable `AGENTE_DATOS`.
 # Windows
 runtime\python\python.exe -m pytest tests\ -q
 
-# macOS
+# macOS / Linux
 runtime/python/bin/python3 -m pytest tests/ -q
 ```
 
@@ -286,8 +289,9 @@ además revisa el contenido buscando credenciales — si encuentra algo que pare
 una clave, no genera el archivo.
 
 En macOS hay además un botón para armar un `.dmg`. En Windows se puede armar un
-`.exe` con PyInstaller; las instrucciones y sus limitaciones están en
-[`HANDOFF-WINDOWS.md`](HANDOFF-WINDOWS.md).
+`.exe` con PyInstaller (ver [`HANDOFF-WINDOWS.md`](HANDOFF-WINDOWS.md)). En Linux
+el camino es la misma carpeta portable; un `.deb`/`.rpm`/AppImage queda pendiente
+(ver [`HANDOFF-LINUX.md`](HANDOFF-LINUX.md)).
 
 ---
 
@@ -314,7 +318,7 @@ el agente puede leer cualquier archivo al que tengas acceso.
 
 La elevación de privilegios existe solo en macOS, y usa el diálogo de
 autenticación del sistema (nunca uno propio: tu contraseña jamás llega a este
-proceso). En Windows no está implementada y el control está oculto.
+proceso). En Windows y Linux no está implementada y el control está oculto.
 
 ### La captura intercepta HTTPS
 
@@ -387,9 +391,9 @@ no pediste, no lo apruebes.
 ### Las claves
 
 El `.env` vive con tus datos, no con el código, así que compartir el proyecto
-no se las lleva. En macOS queda con permisos `0600`. En Windows los permisos
-POSIX no aplican (el acceso va por ACLs) y el archivo queda legible por tu
-usuario: el panel de Diagnóstico te lo dice en vez de mentirte con un tilde
+no se las lleva. En macOS y Linux queda con permisos `0600`. En Windows los
+permisos POSIX no aplican (el acceso va por ACLs) y el archivo queda legible por
+tu usuario: el panel de Diagnóstico te lo dice en vez de mentirte con un tilde
 verde.
 
 ### Instalación de paquetes

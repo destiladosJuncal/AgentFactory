@@ -42,6 +42,8 @@ def _backend():
         from core import programador_launchd as b
     elif plataforma.ES_WINDOWS:
         from core import programador_schtasks as b
+    elif plataforma.ES_LINUX:
+        from core import programador_systemd as b
     else:
         from core import programador_nulo as b
     return b

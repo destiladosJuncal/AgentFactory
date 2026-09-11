@@ -79,20 +79,24 @@ from core import programador  # noqa: E402
 def notificar(titulo: str, mensaje: str):
     """Aviso al sistema. Best-effort: nunca rompe la corrida.
 
-    Solo macOS por ahora. En Windows el toast nativo necesita un
-    AppUserModelID registrado y una vuelta por WinRT; mientras tanto el
-    resultado de cada corrida se ve en la pestaña Tareas, que es el canal
-    que la persona realmente mira."""
-    if sys.platform != "darwin":
-        return
+    macOS: osascript. Linux: notify-send (libnotify), si está. En Windows el
+    toast nativo necesita un AppUserModelID registrado y una vuelta por WinRT;
+    mientras tanto el resultado de cada corrida se ve en la pestaña Tareas, que
+    es el canal que la persona realmente mira."""
+    import shutil
     import subprocess
-    m = (mensaje or "").replace('"', "'")[:240]
-    t = (titulo or "AgentFactory").replace('"', "'")[:80]
+    m = (mensaje or "")[:240]
+    t = (titulo or "AgentFactory")[:80]
     try:
-        subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{m}" with title "AgentFactory" subtitle "{t}"'],
-            capture_output=True, timeout=15)
+        if sys.platform == "darwin":
+            ms = m.replace('"', "'"); ts = t.replace('"', "'")
+            subprocess.run(
+                ["osascript", "-e",
+                 f'display notification "{ms}" with title "AgentFactory" subtitle "{ts}"'],
+                capture_output=True, timeout=15)
+        elif sys.platform.startswith("linux") and shutil.which("notify-send"):
+            subprocess.run(["notify-send", f"AgentFactory · {t}", m],
+                           capture_output=True, timeout=15)
     except Exception:
         pass
 

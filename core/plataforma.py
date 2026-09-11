@@ -31,6 +31,7 @@ else:
 
 ES_MAC = SISTEMA == "mac"
 ES_WINDOWS = SISTEMA == "windows"
+ES_LINUX = SISTEMA == "linux"
 
 
 # --- Apariencia -------------------------------------------------------------

@@ -65,11 +65,25 @@ La primera vez macOS puede decir que no puede verificar al desarrollador (el
 script no está firmado con un Apple Developer ID): clic derecho sobre
 **`INICIAR.command`** → **Abrir** → Abrir.
 
+### Linux (Debian/Ubuntu, Fedora/RHEL y derivados)
+
+Desde una terminal:
+
+```
+./INICIAR.sh
+```
+
+Un solo build cubre las dos familias (comparten bash y systemd). La primera vez
+baja un Python con tkinter dentro de la carpeta si no hay uno usable. Las tareas
+programadas usan **timers de usuario de systemd** (`systemctl --user`, sin sudo).
+Si tkinter no abre, el script te dice el paquete de X11 que falta
+(`apt install libx11-6 …` / `dnf install libX11 …`). Ver `HANDOFF-LINUX.md`.
+
 ### Requisitos
 
 - Windows 10 versión 1803 o posterior (hace falta `tar.exe`, que viene con el
-  sistema desde entonces) / Windows 11, de 64 bits. O macOS con Apple Silicon
-  o Intel.
+  sistema desde entonces) / Windows 11, de 64 bits. macOS con Apple Silicon o
+  Intel. O Linux (x86_64 / aarch64) con entorno de escritorio.
 - Conexión a internet la primera vez.
 - Firefox, **solo** si vas a usar la captura de tráfico.
 

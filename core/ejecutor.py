@@ -117,7 +117,7 @@ class Ejecutor:
     def _ejecutar_simple(self, archivo: str) -> Dict:
         try:
             resultado = subprocess.run(
-                [interprete.interprete(), archivo],
+                [interprete.interpreter(), archivo],
                 capture_output=True,
                 text=True,
                 timeout=5

@@ -200,7 +200,7 @@ class Biblioteca:
             script.write_text(runner, encoding='utf-8')
             try:
                 proc = subprocess.run(
-                    [interprete.interprete(), str(script), str(archivo), funcion,
+                    [interprete.interpreter(), str(script), str(archivo), funcion,
                      json.dumps(argumentos, ensure_ascii=False)],
                     capture_output=True, text=True,
                     timeout=TIMEOUT_EJECUCION, cwd=tmp,

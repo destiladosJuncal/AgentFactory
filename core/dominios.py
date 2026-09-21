@@ -1,136 +1,135 @@
 """
-Comparación de dominios: un solo lugar que decide si dos hosts son el mismo sitio.
+Domain comparison: a single place that decides whether two hosts are the same site.
 
-Existe por un bug concreto. La herramienta que el agente usa para buscar en la
-captura filtraba con `host LIKE '%sitio%'`, o sea por subcadena. Eso hacía dos
-cosas mal a la vez:
+It exists because of a concrete bug. The tool the agent uses to search the
+capture filtered with `host LIKE '%sitio%'`, i.e. by substring. That did two
+things wrong at once:
 
-    sitio='linkedin.com'  ->  tambien traia  notlinkedin.com
-    sitio='google.com'    ->  tambien traia  google.com.ar.phish.net
-    sitio='linkedin'      ->  traia 6 hosts, entre ellos phish-linkedin.ru
+    site='linkedin.com'  ->  also brought  notlinkedin.com
+    site='google.com'    ->  also brought  google.com.ar.phish.net
+    site='linkedin'      ->  brought 6 hosts, among them phish-linkedin.ru
 
-El primer daño es de correctitud: datos de dominios ajenos mezclados en la
-extracción, en silencio. El segundo es de seguridad: contenido de un dominio
-parecido —o directamente de un lookalike— llega al modelo presentado como si
-fuera del sitio real.
+The first harm is correctness: data from other domains mixed silently into the
+extraction. The second is security: content from a similar domain —or outright a
+lookalike— reaches the model presented as if it were from the real site.
 
-Lo llamativo es que la app ya sabía hacerlo bien en otro lado: el filtro de
-captura (`core/proxy.py:_interesa`) compara con `host == h or
-host.endswith("." + h)`, que es lo correcto. Este módulo generaliza esa regla
-y la pone donde todos puedan usarla.
+The striking part is that the app already knew how to do it right elsewhere: the
+capture filter (`core/proxy.py:_interesa`) compares with `host == h or
+host.endswith("." + h)`, which is correct. This module generalizes that rule and
+puts it where everyone can use it.
 
-Para saber qué parte de un host es el dominio que alguien registró se usa la
-Public Suffix List, vía publicsuffix2 (ya viene con mitmproxy). Sin ella no se
-puede distinguir 'google.com.ar' (registrable) de 'phish.net' en
-'google.com.ar.phish.net': hace falta la lista real de sufijos públicos, no se
-puede deducir contando puntos.
+To know which part of a host is the domain someone registered we use the Public
+Suffix List, via publicsuffix2 (already shipped with mitmproxy). Without it you
+can't tell 'google.com.ar' (registrable) from 'phish.net' in
+'google.com.ar.phish.net': you need the real list of public suffixes, it can't
+be deduced by counting dots.
 """
 
 from typing import Any, Dict, Iterable, List
 from urllib.parse import urlsplit
 
 
-def _sin_esquema(texto: str) -> str:
-    """Acepta que le pasen una URL entera y no solo el host.
+def _without_scheme(text: str) -> str:
+    """Accepts being handed a whole URL and not just the host.
 
-    El modelo manda 'https://linkedin.com/jobs' con la misma naturalidad que
-    'linkedin.com', y rechazarlo sería puntilloso sin motivo."""
-    texto = (texto or "").strip().strip("<>\"'")
-    if "//" in texto:
-        texto = urlsplit(texto if "://" in texto else "http://" + texto).netloc
-    texto = texto.split("/")[0]
-    if "@" in texto:                      # user:pass@host
-        texto = texto.rsplit("@", 1)[1]
-    if texto.startswith("["):             # IPv6 entre corchetes
-        return texto.split("]")[0] + "]"
-    return texto.split(":")[0]            # saca el puerto
+    The model sends 'https://linkedin.com/jobs' as naturally as 'linkedin.com',
+    and rejecting it would be needlessly fussy."""
+    text = (text or "").strip().strip("<>\"'")
+    if "//" in text:
+        text = urlsplit(text if "://" in text else "http://" + text).netloc
+    text = text.split("/")[0]
+    if "@" in text:                       # user:pass@host
+        text = text.rsplit("@", 1)[1]
+    if text.startswith("["):              # IPv6 in brackets
+        return text.split("]")[0] + "]"
+    return text.split(":")[0]             # drop the port
 
 
-def normalizar(host: str) -> str:
-    """Host en minúsculas, sin punto final, sin esquema ni puerto."""
-    return _sin_esquema(host).lower().rstrip(".").lstrip(".")
+def normalize(host: str) -> str:
+    """Host in lowercase, no trailing dot, no scheme or port."""
+    return _without_scheme(host).lower().rstrip(".").lstrip(".")
 
 
 def registrable(host: str) -> str:
-    """El dominio que alguien registró: 'accounts.google.com' -> 'google.com'.
+    """The domain someone registered: 'accounts.google.com' -> 'google.com'.
 
-    Devuelve el host normalizado si no se puede determinar (una IP, un host de
-    una sola etiqueta, o si la biblioteca no está)."""
-    h = normalizar(host)
+    Returns the normalized host when it can't be determined (an IP, a
+    single-label host, or if the library isn't there)."""
+    h = normalize(host)
     if not h or h.replace(".", "").isdigit() or h.startswith("["):
-        return h                          # IP: no tiene dominio registrable
+        return h                          # IP: has no registrable domain
     try:
         from publicsuffix2 import get_sld
         sld = get_sld(h)
         return (sld or h).lower()
     except Exception:
-        # Sin publicsuffix2 se degrada a las dos últimas etiquetas. Es peor
-        # (no distingue 'com.ar') pero sigue siendo mucho mejor que subcadena.
-        partes = h.split(".")
-        return ".".join(partes[-2:]) if len(partes) >= 2 else h
+        # Without publicsuffix2 it degrades to the last two labels. It's worse
+        # (doesn't tell 'com.ar' apart) but still far better than substring.
+        parts = h.split(".")
+        return ".".join(parts[-2:]) if len(parts) >= 2 else h
 
 
-def pertenece(host: str, sitio: str) -> bool:
-    """¿`host` es `sitio` o un subdominio suyo?
+def belongs_to(host: str, site: str) -> bool:
+    """Is `host` `site` or a subdomain of it?
 
-    Es la regla de core/proxy.py:_interesa: igualdad exacta o sufijo con punto.
-    'notlinkedin.com' NO pertenece a 'linkedin.com', que es justamente lo que
-    la comparación por subcadena no distinguía."""
-    h, s = normalizar(host), normalizar(sitio)
+    It's the rule of core/proxy.py:_interesa: exact equality or dotted suffix.
+    'notlinkedin.com' does NOT belong to 'linkedin.com', which is exactly what
+    the substring comparison failed to tell apart."""
+    h, s = normalize(host), normalize(site)
     if not h or not s:
         return False
     return h == s or h.endswith("." + s)
 
 
-def _etiquetas(dominio: str) -> List[str]:
-    return [p for p in normalizar(dominio).split(".") if p]
+def _labels(domain: str) -> List[str]:
+    return [p for p in normalize(domain).split(".") if p]
 
 
-def resolver(hosts: Iterable[str], texto: str) -> Dict[str, Any]:
-    """Traduce lo que escribió la persona al sitio concreto de la captura.
+def resolve(hosts: Iterable[str], text: str) -> Dict[str, Any]:
+    """Translates what the person typed into the concrete site in the capture.
 
-    Devuelve una de tres cosas:
+    Returns one of three things:
 
-        {"sitio": "linkedin.com", "hosts": [...]}   resolvió a uno solo
-        {"candidatos": [...]}                        ambiguo: NO se elige
-        {"candidatos": [], "sitios": [...]}          no matcheó nada
+        {"sitio": "linkedin.com", "hosts": [...]}   resolved to a single one
+        {"candidatos": [...]}                        ambiguous: NOT chosen
+        {"candidatos": [], "sitios": [...]}          matched nothing
 
-    La decisión de no adivinar ante ambigüedad es deliberada: elegir el de más
-    tráfico parece cómodo pero puede tomar el dominio equivocado en silencio,
-    que es exactamente el problema que este módulo viene a arreglar. La
-    descripción de `listar_sitios_capturados` ya le pedía al modelo preguntar
-    cuando hay más de uno; ahora el código lo respalda.
+    The decision not to guess on ambiguity is deliberate: picking the one with
+    the most traffic seems convenient but can take the wrong domain silently,
+    which is exactly the problem this module comes to fix. The description of
+    `listar_sitios_capturados` already asked the model to ask when there's more
+    than one; now the code backs it up.
     """
-    conocidos = [normalizar(h) for h in hosts if normalizar(h)]
-    consulta = normalizar(texto)
-    if not consulta:
-        return {"candidatos": [], "sitios": sorted(set(map(registrable, conocidos)))}
+    known = [normalize(h) for h in hosts if normalize(h)]
+    query = normalize(text)
+    if not query:
+        return {"candidatos": [], "sitios": sorted(set(map(registrable, known)))}
 
-    # Caso 1: parece un dominio (tiene punto). Se matchea exacto o subdominio.
-    if "." in consulta:
-        coinciden = sorted({h for h in conocidos if pertenece(h, consulta)})
-        if coinciden:
-            return {"sitio": consulta, "hosts": coinciden}
-        return {"candidatos": [], "sitios": sorted(set(map(registrable, conocidos)))}
+    # Case 1: it looks like a domain (has a dot). Matched exact or subdomain.
+    if "." in query:
+        matches = sorted({h for h in known if belongs_to(h, query)})
+        if matches:
+            return {"sitio": query, "hosts": matches}
+        return {"candidatos": [], "sitios": sorted(set(map(registrable, known)))}
 
-    # Caso 2: una palabra suelta ('linkedin'). Se compara contra las ETIQUETAS
-    # del dominio registrable, no como subcadena: así 'linkedin' encuentra
-    # linkedin.com pero no notlinkedin.com ni phish-linkedin.ru.
-    por_dominio: Dict[str, List[str]] = {}
-    for h in conocidos:
-        por_dominio.setdefault(registrable(h), []).append(h)
+    # Case 2: a bare word ('linkedin'). Compared against the LABELS of the
+    # registrable domain, not as a substring: so 'linkedin' finds linkedin.com
+    # but not notlinkedin.com nor phish-linkedin.ru.
+    by_domain: Dict[str, List[str]] = {}
+    for h in known:
+        by_domain.setdefault(registrable(h), []).append(h)
 
-    candidatos = sorted(d for d in por_dominio if consulta in _etiquetas(d))
+    candidates = sorted(d for d in by_domain if query in _labels(d))
 
-    if len(candidatos) == 1:
-        d = candidatos[0]
-        return {"sitio": d, "hosts": sorted(set(por_dominio[d]))}
-    if candidatos:
-        return {"candidatos": [{"sitio": d, "hosts": sorted(set(por_dominio[d]))}
-                               for d in candidatos]}
-    return {"candidatos": [], "sitios": sorted(por_dominio)}
+    if len(candidates) == 1:
+        d = candidates[0]
+        return {"sitio": d, "hosts": sorted(set(by_domain[d]))}
+    if candidates:
+        return {"candidatos": [{"sitio": d, "hosts": sorted(set(by_domain[d]))}
+                               for d in candidates]}
+    return {"candidatos": [], "sitios": sorted(by_domain)}
 
 
-def sitios_de(hosts: Iterable[str]) -> List[str]:
-    """Los dominios registrables presentes, para ofrecerlos como lista."""
-    return sorted({registrable(h) for h in hosts if normalizar(h)})
+def sites_of(hosts: Iterable[str]) -> List[str]:
+    """The registrable domains present, to offer them as a list."""
+    return sorted({registrable(h) for h in hosts if normalize(h)})

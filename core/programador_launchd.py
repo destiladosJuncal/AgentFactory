@@ -35,7 +35,7 @@ def _plist_path(tarea_id: str) -> Path:
 
 def _plist_xml(tarea: Dict[str, Any]) -> str:
     label = nombre_tarea(tarea["id"])
-    py = interprete.interprete()
+    py = interprete.interpreter()
     script = str(dir_app() / "correr_tarea.py")
     logdir = dir_datos() / "_tareas"
     logdir.mkdir(parents=True, exist_ok=True)

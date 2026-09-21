@@ -11,7 +11,7 @@ from core.biblioteca import Biblioteca
 from core.proveedores import proveedor_configurado
 
 from core import consola  # noqa: E402
-consola.configurar_utf8()
+consola.setup_utf8()
 
 
 

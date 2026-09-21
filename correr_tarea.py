@@ -132,7 +132,7 @@ def correr_script(tarea):
     from core import interprete
     script = tarea["script"]
     try:
-        r = subprocess.run([interprete.interprete(), script], capture_output=True,
+        r = subprocess.run([interprete.interpreter(), script], capture_output=True,
                            text=True, timeout=300, cwd=str(APP_DIR), env=os.environ.copy())
         salida, err, rc = (r.stdout or "").strip(), (r.stderr or "").strip(), r.returncode
     except Exception as e:

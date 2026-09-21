@@ -505,7 +505,7 @@ def ejecutar_python(codigo: str, directorio: str = "", timeout: Any = TIMEOUT_DE
         try:
             from core import paquetes
             proc = subprocess.run(
-                [interprete.interprete(), str(script)], cwd=str(cwd),
+                [interprete.interpreter(), str(script)], cwd=str(cwd),
                 capture_output=True, text=True, timeout=_timeout(timeout),
                 env=paquetes.entorno(base),
             )

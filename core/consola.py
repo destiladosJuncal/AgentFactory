@@ -1,28 +1,29 @@
 """
-Salida de consola en UTF-8.
+Console output in UTF-8.
 
-Existe por un modo de falla concreto y muy tonto: en Windows, la consola usa la
-codepage local (cp850/cp1252 según el caso) y `print("🏭 AgentFactory")` levanta
+It exists because of one concrete and very silly failure mode: on Windows, the
+console uses the local codepage (cp850/cp1252 depending on the case) and
+`print("🏭 AgentFactory")` raises
 
     UnicodeEncodeError: 'charmap' codec can't encode character '\\U0001f3ed'
 
-El código está lleno de emoji —son parte de cómo se lee la salida— así que sin
-esto los modos de consola no arrancan siquiera para mostrar su primera línea.
-En macOS y Linux no cambia nada: ya vienen en UTF-8.
+The code is full of emoji —they're part of how the output reads— so without this
+the console modes don't even start far enough to show their first line. On macOS
+and Linux nothing changes: they're already UTF-8.
 
-Se llama primero de todo en cada punto de entrada que imprima.
+It's called first thing in every entry point that prints.
 """
 
 import sys
 
 
-def configurar_utf8():
-    """Best-effort: si no se puede, se sigue igual. Nunca levanta."""
-    for flujo in (sys.stdout, sys.stderr):
+def setup_utf8():
+    """Best-effort: if it can't, it carries on. Never raises."""
+    for stream in (sys.stdout, sys.stderr):
         try:
-            flujo.reconfigure(encoding="utf-8", errors="replace")
+            stream.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
-            # Puede no existir (pythonw deja stdout en None) o no ser
-            # reconfigurable (ya redirigido a un archivo). En ninguno de los
-            # dos casos hay nada que hacer, ni nada que romper.
+            # It may not exist (pythonw leaves stdout as None) or not be
+            # reconfigurable (already redirected to a file). In neither case is
+            # there anything to do, nor anything to break.
             pass

@@ -107,7 +107,7 @@ def _resolver_sitio(con, sitio: Optional[str]) -> Dict[str, Any]:
     if not sitio:
         return {"hosts": None}          # sin filtro de sitio
 
-    r = dominios.resolver(_hosts_capturados(con), sitio)
+    r = dominios.resolve(_hosts_capturados(con), sitio)
     if "sitio" in r:
         return {"hosts": r["hosts"], "sitio": r["sitio"]}
 

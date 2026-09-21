@@ -117,7 +117,7 @@ def _disparador(tarea: Dict[str, Any]) -> str:
 
 
 def _xml(tarea: Dict[str, Any]) -> str:
-    python = interprete.interprete_sin_consola()
+    python = interprete.interpreter_no_console()
     script = str(dir_app() / "correr_tarea.py")
     argumentos = (f'"{script}" --tarea {tarea["id"]} '
                   f'--datos "{dir_datos()}" --app "{dir_app()}"')

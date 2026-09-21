@@ -124,7 +124,7 @@ def _pip_instalar(requisito: str, destino: Path) -> Tuple[bool, str]:
     destino.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(
-            [interprete.interprete(), "-m", "pip", "install", "--target", str(destino),
+            [interprete.interpreter(), "-m", "pip", "install", "--target", str(destino),
              "--upgrade", requisito],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT_INSTALACION)
     except subprocess.TimeoutExpired:

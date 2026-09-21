@@ -55,7 +55,7 @@ def _disponible() -> bool:
 
 
 def _texto_service(tarea: Dict[str, Any]) -> str:
-    py = interprete.interprete()
+    py = interprete.interpreter()
     script = str(dir_app() / "correr_tarea.py")
     desc = (tarea.get("titulo") or "Tarea").replace("\n", " ")[:180]
     return (

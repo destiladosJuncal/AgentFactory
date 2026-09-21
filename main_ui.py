@@ -108,7 +108,7 @@ from core.proveedores import MODELOS_DISPONIBLES, etiqueta_de, desde_etiqueta  #
 from core import interprete
 
 from core import consola  # noqa: E402
-consola.configurar_utf8()
+consola.setup_utf8()
 
 
 # Si este archivo corre desde adentro del .app, su carpeta es el Resources del
@@ -2582,7 +2582,7 @@ class AgenteUI(BASE_TK):
         # silencio y la UI se queda esperando para siempre.
         try:
             r = subprocess.run(
-                [interprete.interprete(), "-m", "pip", "install", "mitmproxy"],
+                [interprete.interpreter(), "-m", "pip", "install", "mitmproxy"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace")
             resultado = r.returncode == 0 or (r.stderr or "")[-300:]
         except Exception as e:
@@ -2776,7 +2776,7 @@ class AgenteUI(BASE_TK):
         def worker():
             try:
                 subprocess.run(
-                    [interprete.interprete(), str(APP_DIR / "correr_tarea.py"), "--tarea", tid],
+                    [interprete.interpreter(), str(APP_DIR / "correr_tarea.py"), "--tarea", tid],
                     env=os.environ.copy(), timeout=360, capture_output=True, text=True)
             except Exception as e:
                 self.cola.put(("log", f"⚠️ error corriendo la tarea: {e}"))
@@ -2941,7 +2941,7 @@ class AgenteUI(BASE_TK):
         def worker():
             import subprocess
             r = subprocess.run(
-                [interprete.interprete(), "-m", "pip", "install", "mitmproxy"],
+                [interprete.interpreter(), "-m", "pip", "install", "mitmproxy"],
                 capture_output=True, text=True)
             estado["ok"] = (r.returncode == 0)
             estado["err"] = (r.stderr or r.stdout or "").strip()[-500:]

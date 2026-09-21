@@ -1,21 +1,21 @@
 """
-Qué Python usar cuando el agente necesita correr Python.
+Which Python to use when the agent needs to run Python.
 
-Parece trivial —`sys.executable`— y no lo es en dos situaciones:
+It looks trivial —`sys.executable`— and it isn't, in two situations:
 
-  · **Runtime propio.** Cuando el arrancador bajó su propio Python, no hay
-    venv: buscar `venv/bin/python3` (que es lo que hacía core/programador.py)
-    no encuentra nada y se cae a un fallback silencioso.
+  · **Own runtime.** When the launcher downloaded its own Python, there's no
+    venv: looking for `venv/bin/python3` (which is what core/programador.py used
+    to do) finds nothing and falls back silently.
 
-  · **Empaquetado con PyInstaller.** Ahí `sys.executable` es el .exe de la
-    app, NO un intérprete. Cualquier `subprocess.run([sys.executable, script])`
-    relanza la aplicación entera en vez de correr el script. Hay cuatro
-    lugares en el código que hacen exactamente eso (core/ejecucion.py,
-    core/paquetes.py, core/biblioteca.py y el programador), así que congelar
-    la app sin resolver esto la rompe de formas difíciles de diagnosticar.
+  · **Packaged with PyInstaller.** There `sys.executable` is the app's .exe,
+    NOT an interpreter. Any `subprocess.run([sys.executable, script])` relaunches
+    the whole application instead of running the script. There are four places
+    in the code that do exactly that (core/ejecucion.py, core/paquetes.py,
+    core/biblioteca.py and the scheduler), so freezing the app without solving
+    this breaks it in ways that are hard to diagnose.
 
-Este módulo es el único lugar que decide, para que el día que se compile un
-.exe haya que arreglar uno y no cuatro.
+This module is the only place that decides, so that the day an .exe is built
+there's one thing to fix and not four.
 """
 
 import os
@@ -26,99 +26,100 @@ from typing import Optional
 from core import plataforma
 
 
-def _congelado() -> bool:
-    """¿Estamos adentro de un bundle de PyInstaller?"""
+def _frozen() -> bool:
+    """Are we inside a PyInstaller bundle?"""
     return getattr(sys, "frozen", False)
 
 
-def _junto_al_ejecutable() -> Optional[Path]:
-    """El intérprete que se distribuye al lado del .exe, si se lo empaquetó."""
-    if not _congelado():
+def _beside_executable() -> Optional[Path]:
+    """The interpreter shipped next to the .exe, if it was packaged."""
+    if not _frozen():
         return None
     base = Path(sys.executable).parent
-    nombre = "python.exe" if plataforma.ES_WINDOWS else "python3"
-    for cand in (base / nombre, base / "runtime" / "python" / nombre,
-                 base / "_internal" / nombre):
+    name = "python.exe" if plataforma.ES_WINDOWS else "python3"
+    for cand in (base / name, base / "runtime" / "python" / name,
+                 base / "_internal" / name):
         if cand.exists():
             return cand
     return None
 
 
-def _es_stub_de_la_store(ruta: str) -> bool:
-    """El python.exe que Windows deja en el PATH por defecto NO es Python: es
-    un atajo que abre la Microsoft Store. Ejecutarlo no corre nada y le abre
-    una tienda al usuario, así que nunca puede ser la respuesta."""
-    return plataforma.ES_WINDOWS and "windowsapps" in str(ruta).lower()
+def _is_store_stub(path: str) -> bool:
+    """The python.exe that Windows leaves on the PATH by default is NOT Python:
+    it's a shortcut that opens the Microsoft Store. Running it executes nothing
+    and opens a store for the user, so it can never be the answer."""
+    return plataforma.ES_WINDOWS and "windowsapps" in str(path).lower()
 
 
-def _sirve(ruta: str) -> bool:
-    """Se comprueba ejecutándolo, no mirando si el archivo existe — que es la
-    única forma de distinguir un intérprete real de un atajo."""
-    if not ruta or _es_stub_de_la_store(ruta):
+def _works(path: str) -> bool:
+    """Checked by running it, not by looking at whether the file exists — which
+    is the only way to tell a real interpreter from a shortcut."""
+    if not path or _is_store_stub(path):
         return False
     import subprocess
     try:
-        return subprocess.run([ruta, "-c", "import sys"], capture_output=True,
+        return subprocess.run([path, "-c", "import sys"], capture_output=True,
                               timeout=20).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
 
-# Nombre inventado y deliberadamente descriptivo: si la app congelada no
-# encuentra intérprete, subprocess falla con un FileNotFoundError que NOMBRA el
-# problema, en vez de ejecutar algo incorrecto en silencio.
-SIN_INTERPRETE = "python-no-encontrado-junto-a-la-app"
+# Invented and deliberately descriptive name: if the frozen app finds no
+# interpreter, subprocess fails with a FileNotFoundError that NAMES the problem,
+# instead of silently running something incorrect.
+NO_INTERPRETER = "python-not-found-beside-the-app"
 
 
-def interprete() -> str:
-    """El Python con el que correr scripts y módulos del agente.
+def interpreter() -> str:
+    """The Python to run the agent's scripts and modules with.
 
-    Es el mismo que está corriendo la app, salvo que la app esté congelada:
-    ahí sys.executable no es un intérprete y hay que buscar el que viaje al
-    lado."""
-    if not _congelado():
+    It's the same one running the app, unless the app is frozen: there
+    sys.executable isn't an interpreter and we have to look for the one shipped
+    alongside."""
+    if not _frozen():
         return sys.executable
 
-    aparte = _junto_al_ejecutable()
-    if aparte:
-        return str(aparte)
+    beside = _beside_executable()
+    if beside:
+        return str(beside)
 
-    # Sin intérprete al lado se prueba el del sistema, salteando el atajo de
-    # la Store. Devolver sys.executable sería peor: relanzaría la app entera.
+    # With no interpreter alongside, try the system one, skipping the Store
+    # shortcut. Returning sys.executable would be worse: it would relaunch the
+    # whole app.
     from shutil import which
-    for nombre in ("python3", "python"):
-        hallado = which(nombre)
-        if hallado and _sirve(hallado):
-            return hallado
-    return SIN_INTERPRETE
+    for name in ("python3", "python"):
+        found = which(name)
+        if found and _works(found):
+            return found
+    return NO_INTERPRETER
 
 
-def hay_interprete() -> bool:
-    """Para que la UI pueda avisar antes de ofrecer algo que no va a andar."""
-    return interprete() != SIN_INTERPRETE
+def has_interpreter() -> bool:
+    """So the UI can warn before offering something that won't work."""
+    return interpreter() != NO_INTERPRETER
 
 
-def interprete_sin_consola() -> str:
-    """Igual que interprete(), pero sin ventana de consola.
+def interpreter_no_console() -> str:
+    """Same as interpreter(), but without a console window.
 
-    En Windows, pythonw.exe es la variante de subsistema GUI. Importa para las
-    tareas programadas: con python.exe, cada corrida le abre a la persona una
-    ventana negra que aparece sola y se cierra. Fuera de Windows es lo mismo
-    que interprete()."""
-    base = Path(interprete())
+    On Windows, pythonw.exe is the GUI-subsystem variant. It matters for
+    scheduled tasks: with python.exe, each run pops a black window at the person
+    that appears on its own and closes. Off Windows it's the same as
+    interpreter()."""
+    base = Path(interpreter())
     if not plataforma.ES_WINDOWS:
         return str(base)
-    sin_consola = base.with_name("pythonw.exe")
-    return str(sin_consola if sin_consola.exists() else base)
+    no_console = base.with_name("pythonw.exe")
+    return str(no_console if no_console.exists() else base)
 
 
-def entorno_utf8(extra: Optional[dict] = None) -> dict:
-    """Entorno para un hijo Python nuestro, con la salida en UTF-8.
+def utf8_environment(extra: Optional[dict] = None) -> dict:
+    """Environment for a Python child of ours, with output in UTF-8.
 
-    Sin PYTHONIOENCODING, un script que imprima '→' con el stdout redirigido a
-    un pipe usa la codificación local (cp1252 acá) y muere con
-    UnicodeEncodeError. Inofensivo en macOS, imprescindible en Windows."""
-    entorno = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    Without PYTHONIOENCODING, a script that prints '→' with stdout redirected to
+    a pipe uses the local encoding (cp1252 here) and dies with
+    UnicodeEncodeError. Harmless on macOS, essential on Windows."""
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     if extra:
-        entorno.update(extra)
-    return entorno
+        env.update(extra)
+    return env

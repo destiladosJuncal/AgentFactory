@@ -1058,8 +1058,10 @@ class AgenteUI(BASE_TK):
         cuanto vaciás y que suba mientras navegás."""
         try:
             from core import proxy_tool
+            from core import i18n
             bytes_ = proxy_tool.tamano_captura()
-            texto = f"📦 captura: {formato.tamano(bytes_)}" if bytes_ else "📦 captura: vacía"
+            texto = (i18n.t("captura.tamano", tamano=formato.tamano(bytes_))
+                     if bytes_ else i18n.t("captura.vacia"))
         except Exception:
             texto = ""
         if getattr(self, "label_captura", None) is not None:

@@ -730,10 +730,10 @@ class AgenteUI(BASE_TK):
             pass
         if plataforma.ES_WINDOWS:
             from core import win_icono
-            win_icono.poner_icono_taskbar(self, APP_DIR / "icono.ico")
+            win_icono.set_taskbar_icon(self, APP_DIR / "icono.ico")
             return
         self.update_idletasks()                        # que exista NSApplication
-        mac_icono.poner_icono_dock(png)                # Dock + dialogos nativos
+        mac_icono.set_dock_icon(png)                # Dock + dialogos nativos
 
     def _construir_cabecera(self):
         cabecera = tk.Frame(self, bg=COLOR_PANEL, padx=16, pady=10)
@@ -3267,7 +3267,7 @@ class AgenteUI(BASE_TK):
         nota = simpledialog.askstring("Marcar flujo",
                                       "Nota (opcional):", parent=self) or None
         db = proxymod.dir_proxy() / "sesion.db"
-        marcas.marcar_flujo(db, id_flujo, etiqueta.strip(), nota)
+        marcas.mark_flow(db, id_flujo, etiqueta.strip(), nota)
         self._log(f"🔖 Flujo {id_flujo} marcado como «{etiqueta.strip()}»")
         if messagebox.askyesno(
                 "Marcar flujo",

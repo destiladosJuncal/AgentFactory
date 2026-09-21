@@ -1,21 +1,26 @@
 """
-Marcas sobre flujos capturados + retrieval de contexto redactado para el LLM.
+Marks on captured flows + retrieval of redacted context for the LLM.
 
-Camino PARALELO al matcher: el matcher clasifica taint/IDOR automáticamente;
-esto es lo contrario — la clasificación de "interesante" la hace el humano
-(marca un flujo con una etiqueta), y la máquina hace retrieval: dado un id de
-flujo, arma el contexto necesario para razonar sobre él.
+A PARALLEL path to the matcher: the matcher classifies taint/IDOR automatically;
+this is the opposite — the "interesting" classification is made by the human
+(marks a flow with a label), and the machine does retrieval: given a flow id, it
+assembles the context needed to reason about it.
 
-Regla de oro de la redacción:
-  · Se ENMASCARAN cookies de sesión, Authorization y CSRF en TODOS los headers
-    que entran al contexto (ficha, ventana, grupo). Nunca sale un PHPSESSID ni
-    un _identity-frontend crudo.
-  · NO se toca el BODY del flujo bajo análisis: es justo el payload que el
-    humano quiere ver (bugMessage=<script>...). La redacción es de headers, no
-    del contenido a analizar.
+Golden rule of redaction:
+  · Session cookies, Authorization and CSRF are MASKED in ALL headers that enter
+    the context (card, window, group). A raw PHPSESSID or _identity-frontend
+    never leaves.
+  · The BODY of the flow under analysis is NOT touched: it's exactly the payload
+    the human wants to see (bugMessage=<script>...). The redaction is of headers,
+    not of the content to analyze.
 
-Reusa los helpers de core/proxy_adapter (fingerprint, extracción de cookies);
-no reimplementa nada de eso.
+Reuses the helpers from core/proxy_adapter (fingerprint, cookie extraction); it
+reimplements none of that.
+
+(The persisted 'marcas' table and its columns, the returned dict keys and the
+redaction marker's value are still Spanish on purpose: the table is an on-disk
+contract for a later migration phase, and the marker text belongs to the i18n
+phase.)
 """
 
 import json
@@ -31,17 +36,17 @@ from core.proxy_adapter import (
     _valores_sesion, huella_sesion,
 )
 
-# Cookies de sesión de esta app. Definen qué se enmascara y el fingerprint.
-NOMBRES_SESION = ["PHPSESSID", "advanced-frontend", "_identity-frontend", "_csrf-frontend"]
+# This app's session cookies. They define what gets masked and the fingerprint.
+SESSION_NAMES = ["PHPSESSID", "advanced-frontend", "_identity-frontend", "_csrf-frontend"]
 
-MARCA = "«redactado»"
-# Cookies/headers a enmascarar por nombre aunque no estén en la lista explícita.
-_PATRON_SENSIBLE = re.compile(r"session|sess|identity|auth|token|csrf|xsrf|sid\b|phpsessid", re.I)
+REDACTED_MARK = "«redactado»"
+# Cookies/headers to mask by name even if not in the explicit list.
+_SENSITIVE_PATTERN = re.compile(r"session|sess|identity|auth|token|csrf|xsrf|sid\b|phpsessid", re.I)
 
 
-# --- Tabla (idempotente) ----------------------------------------------------
+# --- Table (idempotent) -----------------------------------------------------
 
-def _con(db_path) -> sqlite3.Connection:
+def _connect(db_path) -> sqlite3.Connection:
     con = sqlite3.connect(str(db_path))
     con.row_factory = sqlite3.Row
     con.execute("""
@@ -58,34 +63,34 @@ def _con(db_path) -> sqlite3.Connection:
     return con
 
 
-# --- Marcar / desmarcar / listar --------------------------------------------
+# --- Mark / unmark / list ---------------------------------------------------
 
-def marcar_flujo(db_path, flujo_id: int, etiqueta: str, nota: Optional[str] = None) -> int:
-    con = _con(db_path)
+def mark_flow(db_path, flow_id: int, label: str, note: Optional[str] = None) -> int:
+    con = _connect(db_path)
     cur = con.execute(
         "INSERT INTO marcas (flujo_id, etiqueta, nota, ts) VALUES (?,?,?,?)",
-        (flujo_id, etiqueta, nota, time.time()))
+        (flow_id, label, note, time.time()))
     con.commit()
     return cur.lastrowid
 
 
-def desmarcar_flujo(db_path, marca_id: int) -> bool:
-    con = _con(db_path)
-    cur = con.execute("DELETE FROM marcas WHERE id = ?", (marca_id,))
+def unmark_flow(db_path, mark_id: int) -> bool:
+    con = _connect(db_path)
+    cur = con.execute("DELETE FROM marcas WHERE id = ?", (mark_id,))
     con.commit()
     return cur.rowcount > 0
 
 
-def listar_marcas(db_path) -> List[Dict[str, Any]]:
-    con = _con(db_path)
-    filas = con.execute("""
+def list_marks(db_path) -> List[Dict[str, Any]]:
+    con = _connect(db_path)
+    rows = con.execute("""
         SELECT m.id AS marca_id, m.flujo_id, m.etiqueta, m.nota, m.ts,
                f.metodo, f.esquema, f.host, f.puerto, f.ruta, f.query, f.estado
         FROM marcas m LEFT JOIN flujos f ON f.id = m.flujo_id
         ORDER BY m.ts DESC
     """).fetchall()
     out = []
-    for r in filas:
+    for r in rows:
         out.append({
             "marca_id": r["marca_id"], "flujo_id": r["flujo_id"],
             "etiqueta": r["etiqueta"], "nota": r["nota"], "ts": r["ts"],
@@ -94,29 +99,29 @@ def listar_marcas(db_path) -> List[Dict[str, Any]]:
     return out
 
 
-# --- Redacción --------------------------------------------------------------
+# --- Redaction --------------------------------------------------------------
 
-# NAME=value donde value corta en ';', ',' O fin de línea. El ',' es clave:
-# esta app pliega cookies con ', ' y un split solo por ';' esconde el PHPSESSID
-# dentro del valor de la cookie de al lado.
-_COOKIE_PAR = re.compile(r'([A-Za-z0-9_.\-]+)=([^;,]+)')
-
-
-def _es_cookie_sensible(nombre: str) -> bool:
-    return nombre in NOMBRES_SESION or bool(_PATRON_SENSIBLE.search(nombre))
+# NAME=value where value stops at ';', ',' OR end of line. The ',' is key: this
+# app folds cookies with ', ' and a split by ';' only hides the PHPSESSID inside
+# the value of the neighboring cookie.
+_COOKIE_PAIR = re.compile(r'([A-Za-z0-9_.\-]+)=([^;,]+)')
 
 
-def _valores_sensibles(req_h, resp_h) -> set:
-    """Valores a enmascarar donde aparezcan. Combina los helpers del adapter con
-    una extracción por regex (nombre=valor), porque el adapter parte cookies
-    solo por ';' y esta captura usa ',' — sin el regex, se fuga el PHPSESSID."""
-    vals = set(_valores_sesion(req_h, NOMBRES_SESION))
-    vals |= set(_set_cookie_sesion(resp_h, NOMBRES_SESION))
+def _is_sensitive_cookie(name: str) -> bool:
+    return name in SESSION_NAMES or bool(_SENSITIVE_PATTERN.search(name))
+
+
+def _sensitive_values(req_h, resp_h) -> set:
+    """Values to mask wherever they appear. Combines the adapter's helpers with a
+    regex extraction (name=value), because the adapter splits cookies by ';' only
+    and this capture uses ',' — without the regex, the PHPSESSID leaks."""
+    vals = set(_valores_sesion(req_h, SESSION_NAMES))
+    vals |= set(_set_cookie_sesion(resp_h, SESSION_NAMES))
     for k, v in list(req_h) + list(resp_h):
         kl = k.lower()
         if kl in ("cookie", "set-cookie"):
-            for m in _COOKIE_PAR.finditer(v):
-                if _es_cookie_sensible(m.group(1)):
+            for m in _COOKIE_PAIR.finditer(v):
+                if _is_sensitive_cookie(m.group(1)):
                     vals.add(m.group(2).strip())
         elif kl in ("authorization", "proxy-authorization") or "csrf" in kl or "xsrf" in kl:
             if v.strip():
@@ -124,68 +129,68 @@ def _valores_sensibles(req_h, resp_h) -> set:
     return {v for v in vals if v and len(v) >= 6}
 
 
-def _mask_valores(texto: str, sensibles: set) -> str:
-    for v in sensibles:
-        if v in texto:
-            texto = texto.replace(v, MARCA)
-    return texto
+def _mask_values(text: str, sensitive: set) -> str:
+    for v in sensitive:
+        if v in text:
+            text = text.replace(v, REDACTED_MARK)
+    return text
 
 
-def _redactar_cookie(valor: str) -> str:
-    """Enmascara el VALOR de las cookies de sesión/csrf; conserva los nombres.
-    Agnóstico al separador (';' o ','): corta cada valor por regex."""
+def _redact_cookie(value: str) -> str:
+    """Masks the VALUE of session/csrf cookies; keeps the names. Separator-
+    agnostic (';' or ','): it cuts each value by regex."""
     def repl(m):
-        return f"{m.group(1)}={MARCA}" if _es_cookie_sensible(m.group(1)) else m.group(0)
-    return _COOKIE_PAR.sub(repl, valor)
+        return f"{m.group(1)}={REDACTED_MARK}" if _is_sensitive_cookie(m.group(1)) else m.group(0)
+    return _COOKIE_PAIR.sub(repl, value)
 
 
-def _redactar_headers(headers: List[List[str]], sensibles: set) -> List[List[str]]:
+def _redact_headers(headers: List[List[str]], sensitive: set) -> List[List[str]]:
     out = []
     for k, v in headers:
         kl = k.lower()
         if kl == "cookie":
-            v = _redactar_cookie(v)
+            v = _redact_cookie(v)
         elif kl == "set-cookie":
-            v = _redactar_cookie(v)
+            v = _redact_cookie(v)
         elif kl in ("authorization", "proxy-authorization") or "csrf" in kl or "xsrf" in kl:
-            v = MARCA
+            v = REDACTED_MARK
         else:
-            v = _mask_valores(v, sensibles)
+            v = _mask_values(v, sensitive)
         out.append([k, v])
     return out
 
 
-# --- Contexto ---------------------------------------------------------------
+# --- Context ----------------------------------------------------------------
 
-def _url(fila) -> str:
-    q = f"?{fila['query']}" if fila["query"] else ""
-    return f"{fila['esquema']}://{fila['host']}:{fila['puerto']}{fila['ruta']}{q}"
+def _url(row) -> str:
+    q = f"?{row['query']}" if row["query"] else ""
+    return f"{row['esquema']}://{row['host']}:{row['puerto']}{row['ruta']}{q}"
 
 
-def _fila_flujo(con, fid) -> Optional[sqlite3.Row]:
+def _flow_row(con, fid) -> Optional[sqlite3.Row]:
     return con.execute("SELECT * FROM flujos WHERE id = ?", (fid,)).fetchone()
 
 
-def contexto_flujo(db_path, flujo_id: int, ventana: int = 5,
-                   redactar: bool = True) -> Dict[str, Any]:
-    """Todo lo necesario para razonar sobre un flujo, con headers redactados y
-    el body del flujo marcado intacto."""
-    con = _con(db_path)
-    f = _fila_flujo(con, flujo_id)
+def flow_context(db_path, flow_id: int, window: int = 5,
+                   redact: bool = True) -> Dict[str, Any]:
+    """Everything needed to reason about a flow, with redacted headers and the
+    marked flow's body intact."""
+    con = _connect(db_path)
+    f = _flow_row(con, flow_id)
     if f is None:
-        return {"error": f"No existe el flujo {flujo_id}"}
+        return {"error": f"No existe el flujo {flow_id}"}
 
     req_h, resp_h = _headers(f["req_headers"]), _headers(f["resp_headers"])
-    sensibles = _valores_sensibles(req_h, resp_h)
-    fingerprint, _ = huella_sesion(req_h, NOMBRES_SESION)
+    sensitive = _sensitive_values(req_h, resp_h)
+    fingerprint, _ = huella_sesion(req_h, SESSION_NAMES)
 
-    # Con redactar=False, la persona pidió explícitamente los valores reales
-    # (cookies de sesión, tokens): headers TAL CUAL. Advertencia: esto hace que
-    # los secretos viajen al proveedor del LLM. Es una decisión del usuario.
+    # With redact=False, the person explicitly asked for the real values
+    # (session cookies, tokens): headers AS-IS. Warning: this makes the secrets
+    # travel to the LLM provider. It's the user's decision.
     def _rh(headers):
-        return _redactar_headers(headers, sensibles) if redactar else [list(x) for x in headers]
+        return _redact_headers(headers, sensitive) if redact else [list(x) for x in headers]
 
-    # (a) ficha del flujo — headers redactados, BODY INTACTO (es el payload).
+    # (a) flow card — redacted headers, BODY INTACT (it's the payload).
     ficha = {
         "id": f["id"], "method": f["metodo"], "url": _url(f), "status": f["estado"],
         "ts": f["ts"], "session": fingerprint,
@@ -193,54 +198,54 @@ def contexto_flujo(db_path, flujo_id: int, ventana: int = 5,
         "resp_content_type": f["resp_tipo"] or "",
         "req_headers": _rh(req_h),
         "resp_headers": _rh(resp_h),
-        # sin redactar: esto es lo que el humano quiere analizar
+        # unredacted: this is what the human wants to analyze
         "req_body": _cuerpo_texto(f["req_body"]),
         "resp_body": _cuerpo_texto(f["resp_body"]),
     }
 
-    # (b) ventana temporal del MISMO fingerprint de sesión.
-    # Con fingerprint autenticado, la ventana es esa sesión. Con 'anonimo'
-    # (que mezcla todo el tráfico sin login de todos los hosts) se acota al
-    # mismo host, si no el lead-in es ruido de google/mozilla.
+    # (b) temporal window of the SAME session fingerprint.
+    # With an authenticated fingerprint, the window is that session. With
+    # 'anonimo' (which mixes all the login-less traffic from every host) it's
+    # narrowed to the same host, otherwise the lead-in is google/mozilla noise.
     capturas = con.execute(
         "SELECT * FROM flujos WHERE origen = 'captura' ORDER BY ts, id").fetchall()
-    solo_host = fingerprint == "anonimo"
-    misma = [r for r in capturas
-             if huella_sesion(_headers(r["req_headers"]), NOMBRES_SESION)[0] == fingerprint
-             and (not solo_host or r["host"] == f["host"])]
-    idx = next((i for i, r in enumerate(misma) if r["id"] == flujo_id), None)
-    vent = []
+    host_only = fingerprint == "anonimo"
+    same = [r for r in capturas
+            if huella_sesion(_headers(r["req_headers"]), SESSION_NAMES)[0] == fingerprint
+            and (not host_only or r["host"] == f["host"])]
+    idx = next((i for i, r in enumerate(same) if r["id"] == flow_id), None)
+    window_rows = []
     if idx is not None:
-        for r in misma[max(0, idx - ventana): idx + ventana + 1]:
+        for r in same[max(0, idx - window): idx + window + 1]:
             rh = _headers(r["req_headers"])
-            sr = _valores_sensibles(rh, _headers(r["resp_headers"]))
-            vent.append({
+            sr = _sensitive_values(rh, _headers(r["resp_headers"]))
+            window_rows.append({
                 "id": r["id"], "method": r["metodo"], "status": r["estado"],
-                "url": _url(r) if not redactar else _mask_valores(_url(r), sr),
-                "ts": r["ts"], "es_este": r["id"] == flujo_id,
-                "req_headers": _rh(rh) if not redactar else _redactar_headers(rh, sr),
+                "url": _url(r) if not redact else _mask_values(_url(r), sr),
+                "ts": r["ts"], "es_este": r["id"] == flow_id,
+                "req_headers": _rh(rh) if not redact else _redact_headers(rh, sr),
             })
 
-    # (c) grupo por endpoint: mismos host+ruta, ¿este status es anómalo?
+    # (c) group by endpoint: same host+path, is this status anomalous?
     grupo = con.execute(
         "SELECT id, estado, ts FROM flujos WHERE origen='captura' AND host=? AND ruta=? ORDER BY ts",
         (f["host"], f["ruta"])).fetchall()
-    estados = Counter(r["estado"] for r in grupo)
-    este = f["estado"]
-    anomalo = estados[este] <= max(1, len(grupo) // 5) and len(grupo) > 1
+    statuses = Counter(r["estado"] for r in grupo)
+    this_status = f["estado"]
+    anomalous = statuses[this_status] <= max(1, len(grupo) // 5) and len(grupo) > 1
 
     grupo_endpoint = {
         "host": f["host"], "ruta": f["ruta"], "total": len(grupo),
-        "estados": dict(estados), "este_status": este, "anomalo": anomalo,
+        "estados": dict(statuses), "este_status": this_status, "anomalo": anomalous,
         "otros": [{"id": r["id"], "status": r["estado"], "ts": r["ts"]}
-                  for r in grupo if r["id"] != flujo_id][:20],
+                  for r in grupo if r["id"] != flow_id][:20],
     }
 
-    # (d) marcas ya puestas sobre este flujo.
+    # (d) marks already placed on this flow.
     marcas = [dict(r) for r in con.execute(
         "SELECT id AS marca_id, etiqueta, nota, ts FROM marcas WHERE flujo_id=? ORDER BY ts",
-        (flujo_id,)).fetchall()]
+        (flow_id,)).fetchall()]
 
-    return {"flujo": ficha, "ventana": vent,
+    return {"flujo": ficha, "ventana": window_rows,
             "grupo_endpoint": grupo_endpoint, "marcas": marcas,
-            "redactado": redactar}
+            "redactado": redact}

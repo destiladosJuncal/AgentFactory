@@ -1,17 +1,20 @@
 """
-Ícono de la barra de tareas en Windows.
+Taskbar icon on Windows.
 
-Es el espejo de core/mac_icono.py, con el mismo contrato: best-effort, nunca
-levanta, y devuelve un texto si no pudo (para el panel de diagnóstico).
+It's the mirror of core/mac_icono.py, with the same contract: best-effort, never
+raises, and returns a string if it couldn't (for the diagnostics panel).
 
-Hacen falta dos cosas distintas, y por eso no alcanza con el iconphoto que ya
-usa main_ui.py:
+Two different things are needed, which is why the iconphoto main_ui.py already
+uses isn't enough:
 
-  · La barra de tareas y Alt-Tab leen un .ico de verdad (wm iconbitmap), no el
-    PNG que sirve para la barra de título.
-  · El AGRUPAMIENTO en la barra de tareas lo decide el AppUserModelID. Sin uno
-    propio, Windows agrupa la ventana bajo el intérprete y la persona ve
-    "Python" en vez de AgentFactory.
+  · The taskbar and Alt-Tab read a real .ico (wm iconbitmap), not the PNG that
+    works for the title bar.
+  · The GROUPING in the taskbar is decided by the AppUserModelID. Without one of
+    our own, Windows groups the window under the interpreter and the person sees
+    "Python" instead of AgentFactory.
+
+(The error strings it returns are still Spanish on purpose: they feed the
+Diagnostics panel and move to the i18n layer in a later phase.)
 """
 
 import sys
@@ -23,8 +26,8 @@ from core import plataforma
 APP_ID = "AgentFactory.Escritorio.1"
 
 
-def poner_icono_taskbar(ventana, ico: Optional[Path] = None) -> Optional[str]:
-    """Aplica el ícono. Devuelve None si salió bien, o el motivo si no."""
+def set_taskbar_icon(ventana, ico: Optional[Path] = None) -> Optional[str]:
+    """Applies the icon. Returns None if it went well, or the reason if not."""
     if not plataforma.ES_WINDOWS:
         return "solo aplica en Windows"
 
@@ -32,7 +35,7 @@ def poner_icono_taskbar(ventana, ico: Optional[Path] = None) -> Optional[str]:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     except Exception:
-        # No es fatal: solo cambia cómo agrupa la barra de tareas.
+        # Not fatal: it only changes how the taskbar groups.
         pass
 
     if ico is None:
@@ -48,26 +51,26 @@ def poner_icono_taskbar(ventana, ico: Optional[Path] = None) -> Optional[str]:
     return None
 
 
-def generar_ico(png: Path, destino: Path) -> Optional[str]:
-    """Arma el .ico multi-resolución a partir del PNG de la marca.
+def generate_ico(png: Path, destino: Path) -> Optional[str]:
+    """Builds the multi-resolution .ico from the brand PNG.
 
-    Se corre una sola vez y el .ico se versiona junto al código; está acá para
-    poder regenerarlo si cambia el logo."""
+    It's run once and the .ico is versioned alongside the code; it's here so it
+    can be regenerated if the logo changes."""
     try:
         from PIL import Image
     except ImportError:
         return "falta Pillow"
     try:
-        imagen = Image.open(png)
-        imagen.save(destino, sizes=[(16, 16), (24, 24), (32, 32), (48, 48),
-                                    (64, 64), (128, 128), (256, 256)])
+        image = Image.open(png)
+        image.save(destino, sizes=[(16, 16), (24, 24), (32, 32), (48, 48),
+                                   (64, 64), (128, 128), (256, 256)])
     except Exception as e:
         return f"no pude generar el .ico: {e}"
     return None
 
 
 if __name__ == "__main__":
-    raiz = Path(__file__).resolve().parent.parent
-    error = generar_ico(raiz / "agentfactory-icon-1024.png", raiz / "icono.ico")
-    print(error or f"icono.ico generado en {raiz}")
+    root = Path(__file__).resolve().parent.parent
+    error = generate_ico(root / "agentfactory-icon-1024.png", root / "icono.ico")
+    print(error or f"icono.ico generado en {root}")
     sys.exit(1 if error else 0)

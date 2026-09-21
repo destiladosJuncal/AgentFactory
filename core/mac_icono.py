@@ -1,20 +1,23 @@
 """
-Ícono de la app en el Dock y en los diálogos nativos de macOS.
+App icon in the Dock and in macOS's native dialogs.
 
-El problema: el lanzador hace exec a Python directo, así que cuando Tkinter
-inicializa NSApplication, macOS toma el ícono del bundle de Python (el genérico)
-en vez del de nuestro .app. `iconphoto` de Tk arregla la ventana, pero los
-diálogos nativos (messagebox) y el Dock leen `NSApp.applicationIconImage`, que
-Tk no toca.
+The problem: the launcher execs Python directly, so when Tkinter initializes
+NSApplication, macOS takes the icon from Python's bundle (the generic one)
+instead of our .app's. Tk's `iconphoto` fixes the window, but the native dialogs
+(messagebox) and the Dock read `NSApp.applicationIconImage`, which Tk doesn't
+touch.
 
-La solución sin agregar pyobjc como dependencia: hablarle al runtime de
-Objective-C por ctypes —que en macOS siempre está— para hacer el equivalente de
+The solution without adding pyobjc as a dependency: talk to the Objective-C
+runtime via ctypes —which on macOS is always present— to do the equivalent of
 
     NSApp.setApplicationIconImage_(NSImage.alloc().initWithContentsOfFile_(png))
 
-Es best-effort: si algo falla (otra plataforma, un macOS raro), no rompe nada,
-solo se queda con el ícono genérico. Nunca debe tirar la app por un tema
-cosmético.
+It's best-effort: if something fails (another platform, a weird macOS), it breaks
+nothing, it just keeps the generic icon. It must never take down the app over a
+cosmetic matter.
+
+(The error strings it returns are still Spanish on purpose: they feed the
+Diagnostics panel and move to the i18n layer in a later phase.)
 """
 
 import ctypes
@@ -26,21 +29,21 @@ from typing import Optional
 _c_void_p = ctypes.c_void_p
 
 
-def _cargar_objc():
+def _load_objc():
     objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
     objc.sel_registerName.restype = _c_void_p
     objc.sel_registerName.argtypes = [ctypes.c_char_p]
     objc.objc_getClass.restype = _c_void_p
     objc.objc_getClass.argtypes = [ctypes.c_char_p]
-    # objc_msgSend no tiene una firma única; se re-castea por llamada según los
-    # tipos de argumento. Por eso cada uso define argtypes/restype antes.
+    # objc_msgSend has no single signature; it's re-cast per call according to
+    # the argument types. That's why each use defines argtypes/restype first.
     return objc
 
 
-def poner_icono_dock(png: Path) -> Optional[str]:
-    """Setea el ícono de la app desde un PNG. Devuelve un error (str) o None.
+def set_dock_icon(png: Path) -> Optional[str]:
+    """Sets the app icon from a PNG. Returns an error (str) or None.
 
-    No levanta nunca: cualquier problema vuelve como string y la app sigue."""
+    Never raises: any problem comes back as a string and the app carries on."""
     if sys.platform != "darwin":
         return "solo aplica en macOS"
     png = Path(png)
@@ -48,24 +51,24 @@ def poner_icono_dock(png: Path) -> Optional[str]:
         return f"no existe {png}"
 
     try:
-        objc = _cargar_objc()
+        objc = _load_objc()
 
-        def msg(receptor, selector, restype=_c_void_p, argtypes=(), *args):
+        def msg(receiver, selector, restype=_c_void_p, argtypes=(), *args):
             objc.objc_msgSend.restype = restype
             objc.objc_msgSend.argtypes = [_c_void_p, _c_void_p, *argtypes]
-            return objc.objc_msgSend(receptor, objc.sel_registerName(selector), *args)
+            return objc.objc_msgSend(receiver, objc.sel_registerName(selector), *args)
 
-        # NSString* ruta = [NSString stringWithUTF8String:png]
+        # NSString* path = [NSString stringWithUTF8String:png]
         NSString = objc.objc_getClass(b"NSString")
-        ruta = msg(NSString, b"stringWithUTF8String:", _c_void_p,
+        path = msg(NSString, b"stringWithUTF8String:", _c_void_p,
                    (ctypes.c_char_p,), str(png).encode("utf-8"))
-        if not ruta:
+        if not path:
             return "no pude crear NSString"
 
-        # NSImage* img = [[NSImage alloc] initWithContentsOfFile:ruta]
+        # NSImage* img = [[NSImage alloc] initWithContentsOfFile:path]
         NSImage = objc.objc_getClass(b"NSImage")
         img = msg(NSImage, b"alloc")
-        img = msg(img, b"initWithContentsOfFile:", _c_void_p, (_c_void_p,), ruta)
+        img = msg(img, b"initWithContentsOfFile:", _c_void_p, (_c_void_p,), path)
         if not img:
             return "NSImage no pudo cargar el PNG"
 
@@ -76,5 +79,5 @@ def poner_icono_dock(png: Path) -> Optional[str]:
             return "no hay NSApplication (¿sesión sin GUI?)"
         msg(app, b"setApplicationIconImage:", None, (_c_void_p,), img)
         return None
-    except Exception as e:                      # noqa: BLE001 — jamás romper por el ícono
+    except Exception as e:                      # noqa: BLE001 — never break over the icon
         return f"{type(e).__name__}: {e}"

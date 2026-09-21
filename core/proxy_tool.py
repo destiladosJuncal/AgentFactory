@@ -307,7 +307,7 @@ def contexto_de_flujo(flujo_id: int, ventana: int = 5, redactar: bool = True) ->
         fid, v = int(flujo_id), int(ventana)
     except (TypeError, ValueError):
         return {"error": f"flujo_id inválido: {flujo_id!r}"}
-    return marcas.contexto_flujo(db, fid, ventana=v, redactar=redactar)
+    return marcas.flow_context(db, fid, window=v, redact=redactar)
 
 
 def listar_marcados() -> Dict[str, Any]:
@@ -315,7 +315,7 @@ def listar_marcados() -> Dict[str, Any]:
     db = _db()
     if not db.exists():
         return {"marcas": []}
-    return {"marcas": marcas.listar_marcas(db)}
+    return {"marcas": marcas.list_marks(db)}
 
 
 def ejecutar_tool_proxy(nombre: str, argumentos: dict, redactar: bool = True) -> Dict[str, Any]:

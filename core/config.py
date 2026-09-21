@@ -152,9 +152,9 @@ def asegurar_precios() -> Optional[str]:
     actuales = leer()
     if any(c.startswith("PRECIO_") and v.strip() for c, v in actuales.items()):
         return None
-    guardar(tabla.como_env())
-    return (f"Cargué los precios conocidos al {tabla.FECHA_VERIFICACION} "
-            f"({len(tabla.PRECIOS_CONOCIDOS)} modelos).")
+    guardar(tabla.as_env())
+    return (f"Cargué los precios conocidos al {tabla.VERIFIED_ON} "
+            f"({len(tabla.KNOWN_PRICES)} modelos).")
 
 
 def precios_actuales() -> Dict[str, tuple]:
@@ -167,7 +167,7 @@ def precios_actuales() -> Dict[str, tuple]:
         if not m:
             continue
         # De 'CLAUDE_OPUS_4_8' se vuelve al id buscando cuál coincide.
-        for modelo in list(tabla.PRECIOS_CONOCIDOS) + [modelo_de_clave(m.group(1))]:
+        for modelo in list(tabla.KNOWN_PRICES) + [modelo_de_clave(m.group(1))]:
             if re.sub(r"[^A-Z0-9]+", "_", modelo.upper()).strip("_") == m.group(1):
                 precio = precio_de(modelo)
                 if precio:

@@ -1,34 +1,34 @@
 """
-Carga de imágenes para mostrarlas dentro de la conversación.
+Loading images to show them inside the conversation.
 
-Dos motores, según lo que haya instalado:
+Two engines, depending on what's installed:
 
-  · Con Pillow: cualquier formato (PNG, JPEG, WEBP, GIF…) y redimensionado
-    suave. Es el camino bueno y viene en requirements.txt.
-  · Sin Pillow: solo lo que entiende Tk (PNG y GIF desde Tk 8.6), y el
-    redimensionado es por división entera (½, ⅓, ¼…), así que una imagen
-    puede quedar un poco más chica de lo pedido. Sirve igual y evita que la
-    app se rompa si falta la dependencia.
+  · With Pillow: any format (PNG, JPEG, WEBP, GIF…) and smooth resizing. It's
+    the good path and it ships in requirements.txt.
+  · Without Pillow: only what Tk understands (PNG and GIF from Tk 8.6), and the
+    resizing is by integer division (½, ⅓, ¼…), so an image may come out a bit
+    smaller than requested. It still works and keeps the app from breaking if
+    the dependency is missing.
 
-El detalle que arruina esto en Tkinter: si no se guarda una referencia viva al
-PhotoImage, el recolector de basura se lo lleva y en pantalla queda un hueco
-blanco. Por eso `cargar()` devuelve el objeto y quien lo inserta TIENE que
-retenerlo (ver `retener` en el renderizador).
+The detail that ruins this in Tkinter: if you don't keep a live reference to the
+PhotoImage, the garbage collector takes it and a white gap is left on screen.
+That's why `load()` returns the object and whoever inserts it MUST hold onto it
+(see `retener` in the renderer).
 """
 
 import math
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-ANCHO_MAX = 520          # ancho de la transcripción, en píxeles
-ALTO_MAX = 420
+MAX_WIDTH = 520          # transcript width, in pixels
+MAX_HEIGHT = 420
 MAX_BYTES = 25 * 1024 * 1024
 
-EXTENSIONES_TK = {".png", ".gif"}
-EXTENSIONES_PILLOW = {".png", ".gif", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"}
+TK_EXTENSIONS = {".png", ".gif"}
+PILLOW_EXTENSIONS = {".png", ".gif", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"}
 
 
-def _hay_pillow() -> bool:
+def _has_pillow() -> bool:
     try:
         from PIL import Image, ImageTk  # noqa: F401
         return True
@@ -36,89 +36,90 @@ def _hay_pillow() -> bool:
         return False
 
 
-def extensiones_soportadas() -> set:
-    return EXTENSIONES_PILLOW if _hay_pillow() else EXTENSIONES_TK
+def supported_extensions() -> set:
+    return PILLOW_EXTENSIONS if _has_pillow() else TK_EXTENSIONS
 
 
-def parece_imagen(ruta: str) -> bool:
-    return Path(str(ruta)).suffix.lower() in EXTENSIONES_PILLOW
+def looks_like_image(path: str) -> bool:
+    return Path(str(path)).suffix.lower() in PILLOW_EXTENSIONS
 
 
-def resolver(ruta: str, base: Optional[Path] = None) -> Optional[Path]:
-    """Convierte lo que escribió el modelo en una ruta real.
+def resolve(path: str, base: Optional[Path] = None) -> Optional[Path]:
+    """Turns what the model wrote into a real path.
 
-    Puede venir absoluta, relativa al workspace de la conversación, o con '~'.
+    It may come absolute, relative to the conversation's workspace, or with '~'.
     """
-    if not ruta:
+    if not path:
         return None
-    # Acepta 'file:///Users/...' y rutas con %20: es como suelen escribirlas
-    # los modelos, y sin esto la imagen "no se encuentra" aunque exista.
+    # Accepts 'file:///Users/...' and paths with %20: it's how models usually
+    # write them, and without this the image is "not found" even though it
+    # exists.
     from core.plataforma import limpiar_ruta
-    p = Path(limpiar_ruta(str(ruta)))
+    p = Path(limpiar_ruta(str(path)))
     if p.is_absolute():
         return p if p.is_file() else None
     if base:
-        candidata = Path(base) / p
-        if candidata.is_file():
-            return candidata
+        candidate = Path(base) / p
+        if candidate.is_file():
+            return candidate
     return p if p.is_file() else None
 
 
-def cargar(ruta: str, base: Optional[Path] = None,
-           ancho_max: int = ANCHO_MAX, alto_max: int = ALTO_MAX) -> Dict[str, Any]:
-    """Devuelve {'imagen': PhotoImage, 'ancho', 'alto', 'original', 'ruta'} o
+def load(path: str, base: Optional[Path] = None,
+           max_width: int = MAX_WIDTH, max_height: int = MAX_HEIGHT) -> Dict[str, Any]:
+    """Returns {'imagen': PhotoImage, 'ancho', 'alto', 'original', 'ruta'} or
     {'error': ...}.
 
-    Quien reciba 'imagen' debe mantener una referencia mientras esté en
-    pantalla, o Tk la borra."""
-    archivo = resolver(ruta, base)
-    if archivo is None:
-        return {"error": f"No encontré la imagen: {ruta}"}
+    Whoever receives 'imagen' must keep a reference while it's on screen, or Tk
+    deletes it."""
+    file = resolve(path, base)
+    if file is None:
+        return {"error": f"No encontré la imagen: {path}"}
 
     try:
-        tamano = archivo.stat().st_size
+        size = file.stat().st_size
     except OSError as e:
-        return {"error": f"No pude leer {archivo.name}: {e}"}
-    if tamano > MAX_BYTES:
-        return {"error": f"{archivo.name} pesa {tamano/1024/1024:.0f} MB; "
+        return {"error": f"No pude leer {file.name}: {e}"}
+    if size > MAX_BYTES:
+        return {"error": f"{file.name} pesa {size/1024/1024:.0f} MB; "
                          f"demasiado para mostrar en línea"}
 
-    extension = archivo.suffix.lower()
-    if extension not in extensiones_soportadas():
-        falta = " (instalá Pillow para más formatos)" if not _hay_pillow() else ""
-        return {"error": f"No puedo mostrar archivos {extension}{falta}"}
+    extension = file.suffix.lower()
+    if extension not in supported_extensions():
+        missing = " (instalá Pillow para más formatos)" if not _has_pillow() else ""
+        return {"error": f"No puedo mostrar archivos {extension}{missing}"}
 
-    if _hay_pillow():
-        return _cargar_pillow(archivo, ancho_max, alto_max)
-    return _cargar_tk(archivo, ancho_max, alto_max)
+    if _has_pillow():
+        return _load_pillow(file, max_width, max_height)
+    return _load_tk(file, max_width, max_height)
 
 
-def _cargar_pillow(archivo: Path, ancho_max: int, alto_max: int) -> Dict[str, Any]:
+def _load_pillow(file: Path, max_width: int, max_height: int) -> Dict[str, Any]:
     from PIL import Image, ImageTk
     try:
-        img = Image.open(archivo)
+        img = Image.open(file)
         original = img.size
-        # thumbnail respeta la proporción y solo achica, nunca agranda.
-        img.thumbnail((ancho_max, alto_max), Image.LANCZOS)
-        foto = ImageTk.PhotoImage(img)
+        # thumbnail keeps the aspect ratio and only shrinks, never enlarges.
+        img.thumbnail((max_width, max_height), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(img)
     except Exception as e:
-        return {"error": f"No pude abrir {archivo.name}: {e}"}
-    return {"imagen": foto, "ancho": foto.width(), "alto": foto.height(),
-            "original": original, "ruta": archivo}
+        return {"error": f"No pude abrir {file.name}: {e}"}
+    return {"imagen": photo, "ancho": photo.width(), "alto": photo.height(),
+            "original": original, "ruta": file}
 
 
-def _cargar_tk(archivo: Path, ancho_max: int, alto_max: int) -> Dict[str, Any]:
+def _load_tk(file: Path, max_width: int, max_height: int) -> Dict[str, Any]:
     import tkinter as tk
     try:
-        foto = tk.PhotoImage(file=str(archivo))
+        photo = tk.PhotoImage(file=str(file))
     except Exception as e:
-        return {"error": f"No pude abrir {archivo.name}: {e}"}
+        return {"error": f"No pude abrir {file.name}: {e}"}
 
-    original = (foto.width(), foto.height())
-    # subsample solo divide por enteros: se elige el menor factor que entre.
-    factor = max(math.ceil(original[0] / ancho_max),
-                 math.ceil(original[1] / alto_max), 1)
+    original = (photo.width(), photo.height())
+    # subsample only divides by integers: the smallest factor that fits is used.
+    factor = max(math.ceil(original[0] / max_width),
+                 math.ceil(original[1] / max_height), 1)
     if factor > 1:
-        foto = foto.subsample(factor, factor)
-    return {"imagen": foto, "ancho": foto.width(), "alto": foto.height(),
-            "original": original, "ruta": archivo}
+        photo = photo.subsample(factor, factor)
+    return {"imagen": photo, "ancho": photo.width(), "alto": photo.height(),
+            "original": original, "ruta": file}

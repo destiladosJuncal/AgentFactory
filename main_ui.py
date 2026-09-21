@@ -1118,7 +1118,7 @@ class AgenteUI(BASE_TK):
         self._copiables.clear()
         self.transcripcion._imagenes_retenidas = []
 
-        for texto, tag in bienvenida.texto_inicial(
+        for texto, tag in bienvenida.initial_text(
                 hay_credenciales=proveedor is not None,
                 proveedor=proveedor.descripcion() if proveedor else "",
                 n_conversaciones=len(self.conversaciones),
@@ -1244,7 +1244,7 @@ class AgenteUI(BASE_TK):
         # La conversación creada al empezar a teclear todavía no tiene
         # nombre: recién ahora sabemos de qué se trata.
         if getattr(self, "_titulo_provisorio", None) == self.conversacion.conversacion_dir:
-            titulo = bienvenida.titulo_desde_texto(texto)
+            titulo = bienvenida.title_from_text(texto)
             if titulo:
                 self.conversacion.meta["titulo"] = titulo
                 self.conversacion._persistir()
@@ -2286,7 +2286,7 @@ class AgenteUI(BASE_TK):
         self.update_idletasks()
 
         def trabajo():
-            self.cola.put(("precios", tabla.consultar_web()))
+            self.cola.put(("precios", tabla.fetch_from_web()))
         threading.Thread(target=trabajo, daemon=True).start()
 
     def _mostrar_precios(self, resultado):
@@ -2300,7 +2300,7 @@ class AgenteUI(BASE_TK):
             return
 
         actuales = configuracion.precios_actuales()
-        d = tabla.comparar(encontrados, actuales)
+        d = tabla.compare(encontrados, actuales)
 
         self._escribir_config(f"\nLeí {len(encontrados)} modelos de:\n", "ok")
         for nombre, url in resultado["fuentes"].items():
@@ -2330,7 +2330,7 @@ class AgenteUI(BASE_TK):
             self._escribir_config("\nNo apliqué nada.\n", "tenue")
             return
 
-        configuracion.guardar(tabla.como_env(encontrados))
+        configuracion.guardar(tabla.as_env(encontrados))
         self._escribir_config(f"\n💲 Precios actualizados ({len(encontrados)} modelos).\n", "ok")
         self.refrescar_conversaciones()
 

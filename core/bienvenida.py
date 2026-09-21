@@ -1,13 +1,16 @@
 """
-Pantalla de arranque: el logo de AgentFactory en ASCII y el mensaje inicial.
+Startup screen: the AgentFactory logo in ASCII and the initial message.
 
-El arte se generó desde el mismo PNG del icono, reduciéndolo a una grilla de
-caracteres y midiendo cuánto VERDE tiene cada celda respecto del rojo y el azul
-—no el brillo—, porque el fondo de lluvia Matrix también es verde oscuro y por
-brillo la silueta se perdía entre los caracteres del fondo.
+The art was generated from the icon's own PNG, reducing it to a grid of
+characters and measuring how much GREEN each cell has relative to red and blue
+—not the brightness—, because the Matrix-rain background is also dark green and
+by brightness the silhouette got lost among the background characters.
 
-Queda embebido como texto y no se recalcula: así el arranque no depende de que
-el PNG siga estando ni de que Pillow esté instalado.
+It's embedded as text and not recomputed: that way startup doesn't depend on the
+PNG still being there nor on Pillow being installed.
+
+(The user-facing message text and the styling tags below are still Spanish on
+purpose: they move to the i18n layer in a later phase, not this rename.)
 """
 
 from typing import List, Optional
@@ -42,27 +45,27 @@ LOGO = r"""
 """
 
 
-def titulo_desde_texto(texto: str, maximo: int = 45) -> str:
-    """Saca un título de conversación del primer mensaje.
+def title_from_text(text: str, maximum: int = 45) -> str:
+    """Derives a conversation title from the first message.
 
-    Se queda con la primera línea con contenido, sin signos de pregunta ni
-    puntuación final, y cortando en un espacio para no partir una palabra."""
-    lineas = [l.strip() for l in (texto or "").splitlines() if l.strip()]
-    if not lineas:
+    Keeps the first line with content, without question marks or trailing
+    punctuation, and cutting at a space so as not to split a word."""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    if not lines:
         return ""
-    titulo = lineas[0].strip("¿?¡!.,;: \t")
-    if len(titulo) > maximo:
-        corte = titulo.rfind(" ", 0, maximo)
-        titulo = titulo[:corte if corte > maximo // 2 else maximo].rstrip() + "…"
-    return titulo
+    title = lines[0].strip("¿?¡!.,;: \t")
+    if len(title) > maximum:
+        cut = title.rfind(" ", 0, maximum)
+        title = title[:cut if cut > maximum // 2 else maximum].rstrip() + "…"
+    return title
 
 
-def texto_inicial(hay_credenciales: bool, proveedor: str,
+def initial_text(hay_credenciales: bool, proveedor: str,
                   n_conversaciones: int, ruta_env) -> List[tuple]:
-    """Devuelve [(texto, tag)] para pintar en la transcripción al abrir.
+    """Returns [(text, tag)] to paint in the transcript on open.
 
-    Separa dos situaciones que necesitan mensajes muy distintos: la primera vez
-    (sin API key, hay que configurar antes de poder hacer nada) y el uso normal.
+    Separates two situations that need very different messages: the first time
+    (no API key, you have to configure before doing anything) and normal use.
     """
     bloques: List[tuple] = [(LOGO.strip("\n"), "arte"), ("\n\n", "cuerpo")]
 

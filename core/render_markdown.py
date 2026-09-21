@@ -316,7 +316,7 @@ def _barra_de_codigo(texto, codigo: str, lenguaje: str,
 
 def _insertar_imagen(texto, ruta: str, alt: str, base_imagenes, al_abrir_imagen, al_abrir=None):
     """Inserta la imagen en el Text, o un aviso si no se puede."""
-    resultado = imagenes.cargar(ruta, base_imagenes)
+    resultado = imagenes.load(ruta, base_imagenes)
 
     if "error" in resultado:
         texto.insert("end", f"🖼  {alt or ruta}\n", "md_parrafo")

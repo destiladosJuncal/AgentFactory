@@ -137,7 +137,7 @@ _mover_a_papelera = plataforma.mover_a_papelera
 
 def _tamano_legible(ruta: Path) -> str:
     total = sum(f.stat().st_size for f in ruta.rglob("*") if f.is_file())
-    return formato.tamano(total)
+    return formato.size(total)
 
 
 class ColaSalida:
@@ -605,7 +605,7 @@ class DialogoReenvio(tk.Toplevel):
             self.resp.insert("end", r["error"], "err")
             self.resp.configure(state="disabled")
             return
-        self.estado.configure(text=f"{r['estado']} - {formato.segundos(r['ms']/1000)}",
+        self.estado.configure(text=f"{r['estado']} - {formato.duration(r['ms']/1000)}",
                               foreground=COLOR_AGENTE)
         f = self.almacen.obtener(r["id"])
         import json as _json
@@ -1060,7 +1060,7 @@ class AgenteUI(BASE_TK):
             from core import proxy_tool
             from core import i18n
             bytes_ = proxy_tool.tamano_captura()
-            texto = (i18n.t("captura.tamano", tamano=formato.tamano(bytes_))
+            texto = (i18n.t("captura.tamano", tamano=formato.size(bytes_))
                      if bytes_ else i18n.t("captura.vacia"))
         except Exception:
             texto = ""
@@ -1080,7 +1080,7 @@ class AgenteUI(BASE_TK):
             return
         if not messagebox.askokcancel(
                 "Vaciar captura",
-                f"Se van a borrar TODOS los flujos capturados ({formato.tamano(bytes_)}).\n\n"
+                f"Se van a borrar TODOS los flujos capturados ({formato.size(bytes_)}).\n\n"
                 "Esto no toca tus conversaciones ni tareas, solo lo que navegaste "
                 "con Firefox. No se puede deshacer.\n\n¿Vaciar?",
                 icon="warning", parent=self):
@@ -1141,7 +1141,7 @@ class AgenteUI(BASE_TK):
                 # '~' = estimado a partir de los tokens, porque esa conversación
                 # es anterior a que la app registrara el costo turno a turno.
                 aprox = "~" if c.get("costo_estimado") else ""
-                gasto = f"  ·  {aprox}{formato.dinero(c['costo'])}"
+                gasto = f"  ·  {aprox}{formato.money(c['costo'])}"
             else:
                 gasto = ""
             self.lista_conversaciones.insert(
@@ -1152,8 +1152,8 @@ class AgenteUI(BASE_TK):
         hay_estimados = any(c.get("costo_estimado") for c in self.conversaciones)
         if tokens:
             self.total_gasto.configure(
-                text=f"Total: {formato.cantidad(tokens)} tokens  ·  "
-                     f"{'~' if hay_estimados else ''}{formato.dinero(total)}")
+                text=f"Total: {formato.compact(tokens)} tokens  ·  "
+                     f"{'~' if hay_estimados else ''}{formato.money(total)}")
         else:
             self.total_gasto.configure(text="")
 
@@ -1433,7 +1433,7 @@ class AgenteUI(BASE_TK):
 
     @staticmethod
     def _formato_tokens(n: int) -> str:
-        return formato.cantidad(n)
+        return formato.compact(n)
 
     def _texto_metricas(self, conversacion, en_curso: bool) -> str:
         uso = conversacion.uso_turno if en_curso else conversacion.uso_total
@@ -1447,14 +1447,14 @@ class AgenteUI(BASE_TK):
 
         # El cronómetro corre desde el arranque; los tokens recién existen
         # cuando vuelve la primera llamada.
-        partes = [formato.segundos(segundos)]
+        partes = [formato.duration(segundos)]
         if not uso.get("llamadas"):
             return partes[0]
         partes += [f"{self._formato_tokens(uso['entrada'] + uso['salida'])} tokens",
                    f"{uso['llamadas']} llamada(s)"]
         # Si falta el precio de algún modelo usado, no inventamos un total.
         if uso.get("costo_conocido"):
-            partes.append(formato.dinero(uso["costo"]))
+            partes.append(formato.money(uso["costo"]))
         else:
             partes.append("US$ — (cargá los precios en el .env)")
         return " · ".join(partes)
@@ -1750,7 +1750,7 @@ class AgenteUI(BASE_TK):
             return
         self.detalle_proyecto.configure(
             text=f"{p['descripcion']}\n"
-                 f"Iteraciones: {p['iteraciones']} · Mejor puntaje: {formato.porcentaje(p['mejor_puntaje'])} · "
+                 f"Iteraciones: {p['iteraciones']} · Mejor puntaje: {formato.percent(p['mejor_puntaje'])} · "
                  f"Actualizado: {p['actualizado']}\n{p['path']}"
         )
         if not self.ocupado_proyecto:
@@ -1791,7 +1791,7 @@ class AgenteUI(BASE_TK):
         if not messagebox.askokcancel(
             "Borrar proyecto",
             f"«{p['nombre']}»\n\n"
-            f"{p['iteraciones']} iteración(es) · mejor puntaje {formato.porcentaje(p['mejor_puntaje'])} · "
+            f"{p['iteraciones']} iteración(es) · mejor puntaje {formato.percent(p['mejor_puntaje'])} · "
             f"{_tamano_legible(p['path'])}\n"
             f"{p['path']}\n\n"
             "Se borran las iteraciones, la memoria y la solución de ese proyecto.\n"
@@ -2124,18 +2124,18 @@ class AgenteUI(BASE_TK):
             self._escribir_proc(f"  {i}. {p}\n")
 
         if not r.respuestas:
-            self._escribir_proc(f"\n({formato.segundos(r.segundos_total)} · sin consultar a la IA)\n", "meta")
+            self._escribir_proc(f"\n({formato.duration(r.segundos_total)} · sin consultar a la IA)\n", "meta")
             return
 
         secuencial = sum(x.segundos for x in r.respuestas)
         self._escribir_proc(
             f"\n{len(r.respuestas)} consultas en paralelo · modo '{r.modo}' · "
-            f"{formato.segundos(r.segundos_total)} reales vs {formato.segundos(secuencial)} "
+            f"{formato.duration(r.segundos_total)} reales vs {formato.duration(secuencial)} "
             f"si fuera en serie\n\n", "meta")
 
         for i, x in enumerate(r.respuestas, 1):
             self._escribir_proc(f"{i}. {x.pregunta}\n", "titulo")
-            self._escribir_proc(f"   [{x.proveedor} · {formato.segundos(x.segundos)}]\n", "meta")
+            self._escribir_proc(f"   [{x.proveedor} · {formato.duration(x.segundos)}]\n", "meta")
             self._escribir_proc(f"   {x.error or x.texto}\n\n", "err" if x.error else "")
 
         if r.fallidas:
@@ -2363,7 +2363,7 @@ class AgenteUI(BASE_TK):
             return
 
         self._escribir_config(
-            f"   app: {r['archivos']} archivos · {formato.tamano(r['bytes'])} · v{r['version']}\n", "tenue")
+            f"   app: {r['archivos']} archivos · {formato.size(r['bytes'])} · v{r['version']}\n", "tenue")
         self.update_idletasks()
 
         d = empaquetar.construir_dmg(destino, app)
@@ -2373,7 +2373,7 @@ class AgenteUI(BASE_TK):
             return
 
         self._escribir_config(f"\n🐋 {d['dmg']}\n", "ok")
-        self._escribir_config(f"   {formato.tamano(d['bytes'])}\n")
+        self._escribir_config(f"   {formato.size(d['bytes'])}\n")
         self._escribir_config("   Del otro lado: abrir el .dmg, arrastrar la ballena a "
                               "Aplicaciones, doble clic.\n", "tenue")
         self._escribir_config("   La primera vez abre una Terminal mostrando la "
@@ -2399,7 +2399,7 @@ class AgenteUI(BASE_TK):
 
         self._escribir_config(f"\n📦 {resultado['zip']}\n", "ok")
         self._escribir_config(f"   {resultado['archivos']} archivos · "
-                              f"{formato.tamano(resultado['bytes'])}\n")
+                              f"{formato.size(resultado['bytes'])}\n")
         self._escribir_config("   Sin .env, sin venv, sin tus conversaciones. "
                               "Revisado contra credenciales.\n", "tenue")
         self._escribir_config("   En la otra Mac: clic derecho sobre INICIAR.command → Abrir "
@@ -3217,7 +3217,7 @@ class AgenteUI(BASE_TK):
         self.proxy_resp_h.configure(state="normal")
         self.proxy_resp_h.insert("end",
             f"{f['estado']}  ·  {f['resp_tipo']}  ·  "
-            f"{formato.tamano(len(f['resp_body'] or b''))}\n", "linea1")
+            f"{formato.size(len(f['resp_body'] or b''))}\n", "linea1")
         self.proxy_resp_h.insert("end", proxymod.texto_headers(f["resp_headers"]), "hdr")
         self.proxy_resp_h.configure(state="disabled")
 
@@ -3553,7 +3553,7 @@ class AgenteUI(BASE_TK):
                     exito = "✅ ¡OBJETIVO ALCANZADO!" if dato["exito"] else "⏸️ Terminado sin alcanzar el umbral"
                     self._log(f"\n{'=' * 50}\n📊 {exito}\n"
                               f"   Iteraciones: {dato['iteraciones']}\n"
-                              f"   Mejor puntaje: {formato.porcentaje(dato['mejor_puntaje'], 2)}\n"
+                              f"   Mejor puntaje: {formato.percent(dato['mejor_puntaje'], 2)}\n"
                               f"   Proyecto: {dato['proyecto_dir']}")
                     self._fin_proyecto()
 
@@ -3582,7 +3582,7 @@ class AgenteUI(BASE_TK):
                     if r.get("ok"):
                         self._escribir_config(
                             f"✅ {proveedor} responde · modelo {r['modelo']} · "
-                            f"{formato.cantidad(r['tokens'])} tokens · dijo {r['respuesta']!r}\n", "ok")
+                            f"{formato.compact(r['tokens'])} tokens · dijo {r['respuesta']!r}\n", "ok")
                     else:
                         self._escribir_config(f"❌ {proveedor}: {r['detalle']}\n", "mal")
                         if r.get("pista"):

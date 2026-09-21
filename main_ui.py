@@ -92,7 +92,7 @@ from core.proyectos import GestorProyectos, AGENT_CODE_DIR  # noqa: E402
 from core.agente_interactivo import AgenteInteractivo, OBJETIVOS_DEFAULT  # noqa: E402
 from core.biblioteca import Biblioteca  # noqa: E402
 from core.proveedores import crear_proveedor, proveedor_configurado  # noqa: E402
-from core.versiones import GestorVersiones  # noqa: E402
+from core.versiones import VersionManager  # noqa: E402
 from core.procesador import procesar, ErrorProcesador  # noqa: E402
 from core import ejecucion  # noqa: E402
 from core import render_markdown  # noqa: E402
@@ -331,7 +331,7 @@ class DialogoVersiones(tk.Toplevel):
     archivos de vuelta; los proyectos, conversaciones y la biblioteca no se
     tocan nunca."""
 
-    def __init__(self, padre, gestor: GestorVersiones):
+    def __init__(self, padre, gestor: VersionManager):
         super().__init__(padre)
         self.gestor = gestor
         self.title("Versiones del agente")
@@ -377,7 +377,7 @@ class DialogoVersiones(tk.Toplevel):
         self.grab_set()
 
     def _refrescar(self):
-        self.versiones = self.gestor.listar()
+        self.versiones = self.gestor.list_snapshots()
         self.lista.delete(0, "end")
         for v in self.versiones:
             self.lista.insert("end", f" {v['creado']}  ·  {v.get('etiqueta', '')[:22]}")
@@ -405,7 +405,7 @@ class DialogoVersiones(tk.Toplevel):
         self.boton_restaurar.configure(state="normal")
         self.boton_borrar.configure(state="normal")
 
-        d = self.gestor.diferencias(v["id"])
+        d = self.gestor.diff(v["id"])
         if "error" in d:
             self._mostrar(d["error"])
             return
@@ -436,7 +436,7 @@ class DialogoVersiones(tk.Toplevel):
                                           initialvalue="punto seguro", parent=self)
         if etiqueta is None:
             return
-        resultado = self.gestor.crear_snapshot(etiqueta.strip() or "manual")
+        resultado = self.gestor.create_snapshot(etiqueta.strip() or "manual")
         if "error" in resultado:
             messagebox.showerror("Guardar versión", resultado["error"], parent=self)
             return
@@ -450,7 +450,7 @@ class DialogoVersiones(tk.Toplevel):
                                       f"Borrar la versión del {v['creado']}?",
                                       parent=self):
             return
-        self.gestor.borrar(v["id"])
+        self.gestor.delete(v["id"])
         self._refrescar()
 
     def _restaurar(self):
@@ -468,7 +468,7 @@ class DialogoVersiones(tk.Toplevel):
         ):
             return
 
-        resultado = self.gestor.restaurar(v["id"])
+        resultado = self.gestor.restore(v["id"])
         if "error" in resultado:
             messagebox.showerror("Restaurar versión", resultado["error"], parent=self)
             return
@@ -643,7 +643,7 @@ class AgenteUI(BASE_TK):
         self.gestor_conversaciones = GestorConversaciones()
         self.gestor_proyectos = GestorProyectos()
         self.biblioteca = Biblioteca()
-        self.gestor_versiones = GestorVersiones(APP_DIR, RECURSOS_APP)
+        self.gestor_versiones = VersionManager(APP_DIR, RECURSOS_APP)
         self.proxy = None
         self.almacen_proxy = None
         self._flujos_pendientes = 0
@@ -651,7 +651,7 @@ class AgenteUI(BASE_TK):
         # Si el código cambió desde la última vez que abriste la app, queda
         # registrado antes de que uses nada. Es lo que hace que ⌘0 sirva.
         try:
-            nuevo = self.gestor_versiones.snapshot_si_cambio("arranque")
+            nuevo = self.gestor_versiones.snapshot_if_changed("arranque")
             if nuevo and "error" not in nuevo:
                 print(f"🗂  Versión guardada: {nuevo['id']} ({nuevo['archivos']} archivos)")
         except Exception as e:

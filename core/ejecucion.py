@@ -73,7 +73,7 @@ PATRONES_DESTRUCTIVOS: List[Tuple[str, str, str]] = [
 # legítimo el agente escribe el acceso derecho y el diálogo aparece; si llega
 # ofuscado, eso mismo es la señal de que algo lo está manipulando.
 PATRONES_CREDENCIALES: List[Tuple[str, str, str]] = [
-    ("credenciales", r"clave-captura\.key|core\.secretos|from\s+core\s+import[^\n]*\bsecretos\b|secretos\s*\.\s*descifrar",
+    ("credenciales", r"clave-captura\.key|core\.secretos|from\s+core\s+import[^\n]*\bsecretos\b|secretos\s*\.\s*(?:decrypt|key|key_path)",
      "lee o descifra el almacén de credenciales de la captura"),
     ("captura-cruda", r"sesion\.db|_proxy[/\\]",
      "abre la base de la captura directamente, sin pasar por las herramientas"),

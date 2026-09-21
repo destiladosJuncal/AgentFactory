@@ -76,7 +76,7 @@ class Almacen:
         expuestas para siempre a un SELECT crudo. Corre una sola vez: después
         no hay filas en claro que encontrar.
         """
-        if not secretos.disponible():
+        if not secretos.available():
             return
         con = self._con()
         try:
@@ -86,7 +86,7 @@ class Almacen:
                 "       AND req_headers NOT LIKE ?) "
                 "   OR (resp_headers IS NOT NULL AND resp_headers <> '' "
                 "       AND resp_headers NOT LIKE ?)",
-                (secretos.PREFIJO + "%", secretos.PREFIJO + "%")).fetchall()
+                (secretos.PREFIX + "%", secretos.PREFIX + "%")).fetchall()
         except sqlite3.Error:
             return
         if not pendientes:
@@ -95,8 +95,8 @@ class Almacen:
             req, resp = fila["req_headers"], fila["resp_headers"]
             con.execute(
                 "UPDATE flujos SET req_headers = ?, resp_headers = ? WHERE id = ?",
-                (secretos.cifrar(req) if req and not secretos.esta_cifrado(req) else req,
-                 secretos.cifrar(resp) if resp and not secretos.esta_cifrado(resp) else resp,
+                (secretos.encrypt(req) if req and not secretos.is_encrypted(req) else req,
+                 secretos.encrypt(resp) if resp and not secretos.is_encrypted(resp) else resp,
                  fila["id"]))
         con.commit()
 
@@ -140,11 +140,11 @@ class Almacen:
             flujo["ruta"], flujo.get("query", ""),
             # Los headers van CIFRADOS: son donde viven las cookies de sesion
             # y el Authorization, y sin esto un SELECT directo se los lleva.
-            secretos.cifrar(json.dumps(flujo.get("req_headers", []))),
+            secretos.encrypt(json.dumps(flujo.get("req_headers", []))),
             flujo.get("req_body", b""),
             int(flujo.get("req_trunc", 0)),
             flujo.get("estado"),
-            secretos.cifrar(json.dumps(flujo.get("resp_headers", []))),
+            secretos.encrypt(json.dumps(flujo.get("resp_headers", []))),
             flujo.get("resp_body", b""), int(flujo.get("resp_trunc", 0)),
             flujo.get("resp_tipo", ""), flujo.get("ms", 0),
         ))
@@ -403,7 +403,7 @@ def reenviar(almacen: Almacen, id_flujo: int,
     else:
         # El repetidor SI necesita los valores reales para redisparar.
         headers = {k: v for k, v in
-                   json.loads(secretos.descifrar(base["req_headers"]) or "[]")}
+                   json.loads(secretos.decrypt(base["req_headers"]) or "[]")}
     # host/content-length los recalcula requests; dejarlos pisa el reenvío.
     for h in list(headers):
         if h.lower() in ("host", "content-length"):
@@ -446,7 +446,7 @@ def texto_headers(headers_json: str) -> str:
     proxy. Descifra: la persona mirando su propia captura en su propia pantalla
     no es una fuga, y por eso este camino no pide confirmacion."""
     try:
-        pares = json.loads(secretos.descifrar(headers_json) or "[]")
+        pares = json.loads(secretos.decrypt(headers_json) or "[]")
     except (json.JSONDecodeError, TypeError):
         return ""
     return "\n".join(f"{k}: {v}" for k, v in pares)
@@ -493,7 +493,7 @@ def descomprimir(body: bytes, content_encoding: str) -> bytes:
 
 def _content_type_de(headers_json: str) -> str:
     try:
-        for k, v in json.loads(secretos.descifrar(headers_json) or "[]"):
+        for k, v in json.loads(secretos.decrypt(headers_json) or "[]"):
             if k.lower() == "content-type":
                 return v
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -503,7 +503,7 @@ def _content_type_de(headers_json: str) -> str:
 
 def _content_encoding(headers_json: str) -> str:
     try:
-        for k, v in json.loads(secretos.descifrar(headers_json) or "[]"):
+        for k, v in json.loads(secretos.decrypt(headers_json) or "[]"):
             if k.lower() == "content-encoding":
                 return v
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -588,7 +588,7 @@ def params_de(fila) -> List[str]:
 def _headers_json(j):
     import json as _json
     if isinstance(j, str):
-        j = secretos.descifrar(j)
+        j = secretos.decrypt(j)
     try:
         return _json.loads(j) if isinstance(j, (str, bytes)) else (j or [])
     except (ValueError, TypeError):

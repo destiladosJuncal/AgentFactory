@@ -47,7 +47,7 @@ def _headers(j) -> List[List[str]]:
     # por aca. Lo que quedo en claro de una captura vieja vuelve igual.
     if isinstance(j, str):
         from core import secretos
-        j = secretos.descifrar(j)
+        j = secretos.decrypt(j)
     try:
         crudo = json.loads(j) if isinstance(j, (str, bytes)) else (j or [])
     except (json.JSONDecodeError, TypeError, ValueError):

@@ -33,16 +33,16 @@ HEADERS = [["Host", "linkedin.com"], ["Cookie", COOKIE],
 def datos(tmp_path, monkeypatch):
     """Carpeta de datos aislada, con su propia clave."""
     monkeypatch.setenv("AGENTE_DATOS", str(tmp_path))
-    secretos.olvidar()
+    secretos.forget()
     yield tmp_path
-    secretos.olvidar()
+    secretos.forget()
 
 
 # --- 1. La base ya no entrega la cookie ------------------------------------
 
 def test_cifrar_no_deja_el_secreto_visible(datos):
-    cifrado = secretos.cifrar(json.dumps(HEADERS))
-    assert secretos.esta_cifrado(cifrado)
+    cifrado = secretos.encrypt(json.dumps(HEADERS))
+    assert secretos.is_encrypted(cifrado)
     assert "SUPERSECRETO123456789" not in cifrado
     assert "li_at" not in cifrado
     assert "Bearer" not in cifrado
@@ -54,13 +54,13 @@ def test_un_select_crudo_no_sirve(datos, tmp_path):
     con = sqlite3.connect(db)
     con.execute("CREATE TABLE flujos (id INTEGER PRIMARY KEY, req_headers TEXT)")
     con.execute("INSERT INTO flujos (req_headers) VALUES (?)",
-                (secretos.cifrar(json.dumps(HEADERS)),))
+                (secretos.encrypt(json.dumps(HEADERS)),))
     con.commit()
     leido = con.execute("SELECT req_headers FROM flujos").fetchone()[0]
     con.close()
 
     assert "SUPERSECRETO123456789" not in leido
-    assert leido.startswith(secretos.PREFIJO)
+    assert leido.startswith(secretos.PREFIX)
 
 
 # --- 2. Lo interno sigue funcionando ---------------------------------------
@@ -68,7 +68,7 @@ def test_un_select_crudo_no_sirve(datos, tmp_path):
 def test_los_consumidores_internos_ven_el_valor_real(datos):
     # _headers() es el punto unico por el que pasan marcas, el matcher y el
     # fingerprint de sesion. Si aca no descifra, se rompe el agrupado.
-    cifrado = secretos.cifrar(json.dumps(HEADERS))
+    cifrado = secretos.encrypt(json.dumps(HEADERS))
     pares = proxy_adapter._headers(cifrado)
     assert ["Cookie", COOKIE] in pares
     assert ["Authorization", "Bearer TOKEN-ABCDEF"] in pares
@@ -76,36 +76,36 @@ def test_los_consumidores_internos_ven_el_valor_real(datos):
 
 def test_ida_y_vuelta(datos):
     for original in ("", "[]", json.dumps(HEADERS), "acentos: ñoño áéíóú"):
-        assert secretos.descifrar(secretos.cifrar(original)) == original
+        assert secretos.decrypt(secretos.encrypt(original)) == original
 
 
 def test_la_clave_queda_fuera_del_codigo(datos):
-    secretos.cifrar("x")
-    assert secretos.ruta_clave().exists()
-    assert secretos.ruta_clave().parent == datos
+    secretos.encrypt("x")
+    assert secretos.key_path().exists()
+    assert secretos.key_path().parent == datos
 
 
 # --- 3. Compatibilidad con capturas viejas ---------------------------------
 
 def test_lo_guardado_en_claro_se_sigue_leyendo(datos):
     en_claro = json.dumps(HEADERS)
-    assert not secretos.esta_cifrado(en_claro)
-    assert secretos.descifrar(en_claro) == en_claro
+    assert not secretos.is_encrypted(en_claro)
+    assert secretos.decrypt(en_claro) == en_claro
     assert proxy_adapter._headers(en_claro) == [list(p) for p in HEADERS]
 
 
 def test_clave_corrupta_no_rompe_la_app(datos):
-    secretos.cifrar("x")
-    secretos.ruta_clave().write_bytes(b"esto-no-es-una-clave")
-    secretos.olvidar()
+    secretos.encrypt("x")
+    secretos.key_path().write_bytes(b"esto-no-es-una-clave")
+    secretos.forget()
     # Se rehace la clave en vez de reventar.
-    assert secretos.disponible()
+    assert secretos.available()
 
 
 def test_dato_ilegible_devuelve_vacio_en_vez_de_excepcion(datos):
-    secretos.cifrar("x")
-    basura = secretos.PREFIJO + "bWFsbG8="
-    assert secretos.descifrar(basura) == ""
+    secretos.encrypt("x")
+    basura = secretos.PREFIX + "bWFsbG8="
+    assert secretos.decrypt(basura) == ""
 
 
 # --- 4. El gate de lectura -------------------------------------------------
@@ -114,7 +114,7 @@ def test_dato_ilegible_devuelve_vacio_en_vez_de_excepcion(datos):
     "open('clave-captura.key').read()",
     "from core import secretos",
     "from core.secretos import descifrar",
-    "secretos.descifrar(fila)",
+    "secretos.decrypt(fila)",
     "sqlite3.connect('/x/_proxy/sesion.db')",
     r"sqlite3.connect(r'C:\datos\_proxy\sesion.db')",
 ])

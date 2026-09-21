@@ -1,266 +1,260 @@
 # AgentFactory
 
-Asistente conversacional de escritorio (Python + Tkinter) que corre en
-**Windows 10/11**, **macOS** (Apple Silicon e Intel) y **Linux** (Debian/RHEL y
-derivados) desde el mismo código.
+Conversational desktop assistant (Python + Tkinter) that runs on
+**Windows 10/11**, **macOS** (Apple Silicon and Intel) and **Linux** (Debian/RHEL
+and derivatives) from the same code.
 
-No es un chat con un modelo y nada más. Las tres cosas que lo distinguen:
+It's not just a chat with a model. The three things that set it apart:
 
-- **Construye herramientas y se las queda.** El modo iterativo escribe código,
-  lo corre, lo evalúa con un puntaje y reintenta hasta que funciona. Lo que
-  sale bien se publica en una biblioteca compartida y queda disponible para la
-  próxima conversación.
-- **Captura lo que navegás.** Un proxy propio (mitmproxy → SQLite) registra el
-  tráfico web, así el agente puede inferir de qué sitio le hablás y extraer lo
-  que viste, sin que tengas que copiar y pegar nada.
-- **Se despierta solo.** Las tareas programadas corren con la app cerrada, por
-  el planificador del sistema, y guardan su resultado con historial.
+- **It builds tools and keeps them.** The iterative mode writes code, runs it,
+  scores it, and retries until it works. Whatever comes out well is published to
+  a shared library and stays available for the next conversation.
+- **It captures what you browse.** A built-in proxy (mitmproxy → SQLite) records
+  the web traffic, so the agent can infer which site you're talking about and
+  extract what you saw, without you having to copy and paste anything.
+- **It wakes up on its own.** Scheduled tasks run with the app closed, via the
+  system scheduler, and save their result with a history.
 
-Habla con DeepSeek, Claude, Qwen y Gemini.
+Talks to DeepSeek, Claude, Qwen and Gemini.
 
 ---
 
-## Instalación
+## Installation
 
-**No hace falta tener Python instalado.** Si la máquina no tiene uno usable, el
-arrancador baja uno (~30 MB) y lo deja adentro de la carpeta del proyecto. No
-instala nada en el sistema, no pide permisos de administrador y no toca el
-registro: si borrás la carpeta, no queda rastro.
+**You don't need Python installed.** If the machine doesn't have a usable one,
+the launcher downloads one (~30 MB) and drops it inside the project folder. It
+installs nothing on the system, asks for no administrator privileges and doesn't
+touch the registry: if you delete the folder, no trace is left.
 
 ```
 git clone https://github.com/destiladosJuncal/AgentFactory.git
 cd AgentFactory
 ```
 
-Y después, según la plataforma:
+And then, depending on the platform:
 
-### Windows 10 / 11 (64 bits)
+### Windows 10 / 11 (64-bit)
 
-Doble clic en **`INICIAR.bat`**, o desde una consola:
+Double-click **`INICIAR.bat`**, or from a console:
 
 ```
 INICIAR.bat
 ```
 
-La primera vez baja Python, instala las dependencias y abre la app; tarda un
-par de minutos y necesita internet. Los arranques siguientes son directos y
-sin consola.
+The first time it downloads Python, installs the dependencies and opens the app;
+it takes a couple of minutes and needs internet. Subsequent launches are direct
+and console-free.
 
-Si aparece *"Windows protegió tu PC"* (SmartScreen), es porque el archivo no
-está firmado: *Más información* → *Ejecutar de todas formas*. Y si bajaste un
-zip en vez de clonar, puede que Windows marque el `.bat` como descargado: clic
-derecho → *Propiedades* → **Desbloquear**.
+If *"Windows protected your PC"* (SmartScreen) appears, it's because the file
+isn't signed: *More info* → *Run anyway*. And if you downloaded a zip instead of
+cloning, Windows may mark the `.bat` as downloaded: right-click → *Properties* →
+**Unblock**.
 
-### macOS (Apple Silicon o Intel)
+### macOS (Apple Silicon or Intel)
 
-Doble clic en **`INICIAR.command`**, o desde la Terminal:
+Double-click **`INICIAR.command`**, or from the Terminal:
 
 ```
 ./INICIAR.command
 ```
 
-Si clonaste el repo, el bit de ejecución ya viene puesto. Si bajaste un zip,
-hace falta darlo una vez: `chmod +x INICIAR.command`.
+If you cloned the repo, the execute bit is already set. If you downloaded a zip,
+you need to set it once: `chmod +x INICIAR.command`.
 
-La primera vez macOS puede decir que no puede verificar al desarrollador (el
-script no está firmado con un Apple Developer ID): clic derecho sobre
-**`INICIAR.command`** → **Abrir** → Abrir.
+The first time macOS may say it can't verify the developer (the script isn't
+signed with an Apple Developer ID): right-click **`INICIAR.command`** →
+**Open** → Open.
 
-### Linux (Debian/Ubuntu, Fedora/RHEL y derivados)
+### Linux (Debian/Ubuntu, Fedora/RHEL and derivatives)
 
-Desde una terminal:
+From a terminal:
 
 ```
 ./INICIAR.sh
 ```
 
-Un solo build cubre las dos familias (comparten bash y systemd). La primera vez
-baja un Python con tkinter dentro de la carpeta si no hay uno usable. Las tareas
-programadas usan **timers de usuario de systemd** (`systemctl --user`, sin sudo).
-Si tkinter no abre, el script te dice el paquete de X11 que falta
-(`apt install libx11-6 …` / `dnf install libX11 …`). Ver `HANDOFF-LINUX.md`.
+A single build covers both families (they share bash and systemd). The first
+time it downloads a Python with tkinter into the folder if there isn't a usable
+one. Scheduled tasks use **systemd user timers** (`systemctl --user`, no sudo).
+If tkinter won't open, the script tells you the missing X11 package
+(`apt install libx11-6 …` / `dnf install libX11 …`). See `HANDOFF-LINUX.md`.
 
-### Requisitos
+### Requirements
 
-- Windows 10 versión 1803 o posterior (hace falta `tar.exe`, que viene con el
-  sistema desde entonces) / Windows 11, de 64 bits. macOS con Apple Silicon o
-  Intel. O Linux (x86_64 / aarch64) con entorno de escritorio.
-- Conexión a internet la primera vez.
-- Firefox, **solo** si vas a usar la captura de tráfico.
+- Windows 10 version 1803 or later (it needs `tar.exe`, which ships with the
+  system since then) / Windows 11, 64-bit. macOS with Apple Silicon or Intel. Or
+  Linux (x86_64 / aarch64) with a desktop environment.
+- Internet connection the first time.
+- Firefox, **only** if you're going to use traffic capture.
 
-### Primer arranque
+### First launch
 
-La app abre en **⚙️ Configuración** porque todavía no hay ninguna API key
-cargada. Poné la del proveedor que uses y apretá **Probar**: hace una llamada
-real y te dice qué pasó, en vez de fallar recién cuando quieras conversar.
+The app opens in **⚙️ Settings** because no API key is loaded yet. Enter the one
+for the provider you use and hit **Test**: it makes a real call and tells you
+what happened, instead of failing only when you try to chat.
 
 ---
 
-## Qué hace
+## What it does
 
-### Conversaciones
+### Conversations
 
-Cada conversación es una carpeta con su historial, su workspace y sus permisos.
-El agente tiene **21 herramientas**: leer y escribir archivos, ejecutar shell y
-Python, instalar paquetes, consultar la captura del proxy, y las de la
-biblioteca y el modo iterativo que se describen abajo.
+Each conversation is a folder with its own history, workspace and permissions.
+The agent has **21 tools**: read and write files, run shell and Python, install
+packages, query the proxy capture, plus the library and iterative-mode tools
+described below.
 
-La transcripción se renderiza como Markdown: tablas, código con botón de
-ejecutar, e imágenes mostradas en línea. Abajo de cada mensaje quedan los
-tokens y el costo estimado de la llamada.
+The transcript renders as Markdown: tables, code with a run button, and images
+shown inline. Below each message you get the tokens and the estimated cost of the
+call.
 
-### La biblioteca compartida
+### The shared library
 
-El problema que resuelve: sin ella, cada conversación arranca de cero y el
-agente reconstruye una y otra vez las mismas cosas.
+The problem it solves: without it, every conversation starts from scratch and
+the agent rebuilds the same things over and over.
 
-Cuando el agente construye algo que funciona —un extractor, un wrapper de una
-API, un conversor— lo **publica** en la biblioteca, que vive fuera de cualquier
-proyecto. En la conversación siguiente puede listarla, leer un módulo para ver
-qué funciones expone, y ejecutarlo, en vez de escribirlo de nuevo.
+When the agent builds something that works —an extractor, an API wrapper, a
+converter— it **publishes** it to the library, which lives outside any project.
+In the next conversation it can list the library, read a module to see which
+functions it exposes, and run it, instead of writing it again.
 
-Las cuatro herramientas: `listar_biblioteca`, `leer_modulo_biblioteca`,
+The four tools: `listar_biblioteca`, `leer_modulo_biblioteca`,
 `publicar_modulo_biblioteca`, `ejecutar_modulo_biblioteca`.
 
-El flujo que el prompt del sistema le pide seguir cuando le encargás una
-acción: primero mirar la biblioteca; si hay algo que sirve, usarlo; si no
-existe, construirlo con el modo iterativo y publicarlo. Así la biblioteca crece
-con cada cosa que hacen juntos.
+The flow the system prompt asks it to follow when you request an action: first
+look at the library; if there's something useful, use it; if it doesn't exist,
+build it with the iterative mode and publish it. That way the library grows with
+each thing you do together.
 
-### El modo iterativo
+### The iterative mode
 
-Es el motor que **construye** herramientas, en vez de solo ejecutarlas. El
-ciclo es: objetivo → generar código → correrlo → evaluarlo con un puntaje →
-diagnosticar qué falló → reintentar.
+It's the engine that **builds** tools, rather than just running them. The cycle
+is: goal → generate code → run it → score it → diagnose what failed → retry.
 
-El evaluador puntúa funcionalidad (¿pasan los tests?), eficiencia y calidad, y
-devuelve un diagnóstico que entra en el prompt del reintento. Los objetivos y
-el puntaje mínimo se configuran en `config/objetivos.json`.
+The evaluator scores functionality (do the tests pass?), efficiency and quality,
+and returns a diagnosis that feeds into the retry prompt. The goals and the
+minimum score are configured in `config/objetivos.json`.
 
-Se puede usar de dos maneras:
+It can be used two ways:
 
-- **Desde la conversación**, con la herramienta `iterar_codigo`: el agente
-  dispara una corrida iterativa sin que salgas del chat. Corre en modo no
-  interactivo (no puede pararse a preguntarte a mitad de camino) y tiene un
-  tope de 10 iteraciones. Deliberadamente, esta herramienta **no** se le ofrece
-  al generador de adentro, para que una corrida iterativa no pueda disparar
-  otra recursivamente.
-- **Como programa aparte**, con `main_interactivo.py`, que sí puede pausar y
-  preguntarte entre iteraciones.
+- **From the conversation**, with the `iterar_codigo` tool: the agent kicks off
+  an iterative run without you leaving the chat. It runs non-interactively (it
+  can't stop to ask you halfway) and has a cap of 10 iterations. Deliberately,
+  this tool is **not** offered to the inner generator, so an iterative run can't
+  recursively trigger another.
+- **As a separate program**, with `main_interactivo.py`, which *can* pause and
+  ask you between iterations.
 
-Los proyectos son persistentes: una corrida disparada desde el chat crea un
-proyecto normal que después podés seguir iterando a mano.
+Projects are persistent: a run kicked off from the chat creates a normal project
+you can keep iterating by hand afterwards.
 
-### "Sí a todo"
+### "Yes to everything"
 
-Es más acotado de lo que suena, y conviene entender exactamente qué hace.
+It's narrower than it sounds, and it's worth understanding exactly what it does.
 
-Cuando el agente corta a mitad de una tarea larga preguntando *"¿sigo?"*, con
-esto activado se le responde solo, hasta un máximo de veces por cada mensaje
-tuyo. Sirve para tareas de muchos pasos donde no querés estar apretando
-"seguí".
+When the agent stops midway through a long task asking *"shall I continue?"*, with
+this enabled it answers itself, up to a maximum number of times per message you
+send. It's for multi-step tasks where you don't want to keep hitting "continue".
 
-**No desactiva ninguna confirmación de seguridad.** Los diálogos de borrado y
-los de administrador son otro mecanismo y siguen preguntando siempre, con "Sí
-a todo" activado o no. Lo único que automatiza es la pregunta de continuación.
+**It disables no safety confirmation.** The deletion dialogs and the admin ones
+are a separate mechanism and keep asking every time, whether "Yes to everything"
+is on or not. The only thing it automates is the continuation prompt.
 
-Aparte de eso, en el diálogo de confirmación de un comando destructivo hay un
-botón **"Permitir siempre"**, que es otra cosa: vale por *tipo* de operación
-(aprobar un `rm` no aprueba un `git reset --hard`), solo para esa conversación,
-y no se guarda en disco — al reabrir la app se vuelve a preguntar.
+Beyond that, the confirmation dialog for a destructive command has an **"Always
+allow"** button, which is a different thing: it applies per *type* of operation
+(approving an `rm` doesn't approve a `git reset --hard`), only for that
+conversation, and isn't saved to disk — reopening the app asks again.
 
-### Captura de tráfico
+### Traffic capture
 
-Con la captura encendida, el botón **🦊 Abrir Firefox** abre un Firefox con un
-perfil aparte y descartable, ya configurado para pasar por el proxy. Tu Firefox
-de todos los días queda intacto: sin proxy, sin la CA instalada.
+With capture on, the **🦊 Open Firefox** button opens a Firefox with a separate,
+disposable profile, already set up to go through the proxy. Your everyday Firefox
+stays intact: no proxy, no CA installed.
 
-Todo lo que navegás en esa ventana queda en una SQLite. Después, en el chat, el
-agente puede preguntarle a la captura qué sitios hay, buscar flujos y leer
-cuerpos para entender la estructura antes de escribir la extracción. Los flujos
-se pueden **marcar** con una etiqueta y una nota para retomarlos, y hay un
-**repetidor** para volver a disparar una request editada.
+Everything you browse in that window lands in a SQLite. Later, in the chat, the
+agent can ask the capture which sites are there, search flows and read bodies to
+understand the structure before writing the extraction. Flows can be **tagged**
+with a label and a note to revisit them, and there's a **repeater** to re-fire an
+edited request.
 
-En la sección de seguridad está cómo se tratan tus credenciales de sesión
-cuando automatizás sitios con login.
+The security section covers how your session credentials are handled when you
+automate sites with login.
 
-### Tareas programadas
+### Scheduled tasks
 
-El agente no puede despertarse solo: lo despierta el sistema. Cada tarea se
-traduce en un LaunchAgent (macOS), una tarea del Programador de tareas
-(Windows) o un timer de usuario de systemd (Linux) que, a la hora indicada o
-**cada N minutos**, corre sin que la app esté abierta. No hace falta permisos de
-administrador en ninguna plataforma.
+The agent can't wake itself up: the system wakes it. Each task translates into a
+LaunchAgent (macOS), a Task Scheduler task (Windows) or a systemd user timer
+(Linux) that, at the set time or **every N minutes**, runs without the app being
+open. No administrator privileges are needed on any platform.
 
-Hay **dos tipos de tarea**, y la diferencia importa:
+There are **two kinds of task**, and the difference matters:
 
-- **Tarea-agente**: cada corrida le manda un prompt guardado al modelo. Para lo
-  que necesita juicio o redacción en cada vuelta (resumir, decidir, escribir).
-- **Tarea-script (script-first)**: para un workflow concreto y repetible —"cada
-  10 min traeme el saldo", "todas las mañanas armá el reporte"— el agente
-  escribe y prueba **un script Python determinístico** y lo registra como tarea.
-  Ese script corre solo, **barato y sin gastar modelo**. El LLM vuelve a entrar
-  **solo** como *fallback*, cuando el script no puede determinar el próximo paso
-  (falla, o imprime una línea `ESCALAR: <motivo>`): ahí el agente lo arregla o
-  reporta. Es el modelo por defecto para tareas recurrentes: se construye una
-  vez con criterio, y después se ejecuta como código, no como conversación.
+- **Agent task**: each run sends a saved prompt to the model. For what needs
+  judgment or writing on every pass (summarize, decide, compose).
+- **Script task (script-first)**: for a concrete, repeatable workflow —"every
+  10 min get me the balance", "every morning build the report"— the agent writes
+  and tests **a deterministic Python script** and registers it as a task. That
+  script runs on its own, **cheap and without spending model calls**. The LLM
+  comes back in **only** as a *fallback*, when the script can't determine the next
+  step (it fails, or prints an `ESCALAR: <reason>` line): then the agent fixes it
+  or reports. It's the default model for recurring tasks: built once with
+  judgment, then executed as code, not as conversation.
 
-El agente arma las tarea-script desde el chat con la herramienta
-`programar_tarea_script`. Cada corrida queda registrada con su resultado en la
-pestaña **Tareas**, con un semáforo de salud (✅ sana · ⏸ ausente del sistema ·
-❌ falló · 🕓 nunca corrió) y botones para **correrla ahora** (verificar sin
-esperar la agenda) y **recargarla** en el planificador.
+The agent sets up script tasks from the chat with the `programar_tarea_script`
+tool. Each run is logged with its result on the **Tasks** tab, with a health
+light (✅ healthy · ⏸ missing from the system · ❌ failed · 🕓 never ran) and
+buttons to **run it now** (verify without waiting for the schedule) and **reload
+it** into the scheduler.
 
-### Historial de versiones
+### Version history
 
-**Ctrl+0** (⌘0 en Mac) abre el historial del código de la instalación. Cada
-cambio queda registrado y se puede volver atrás. Es la red por si una
-actualización rompe algo.
+**Ctrl+0** (⌘0 on Mac) opens the code history of the installation. Every change
+is recorded and can be rolled back. It's the safety net in case an update breaks
+something.
 
-### Paquetes compartidos
+### Shared packages
 
-Cuando el agente necesita numpy, pandas o lo que sea, se instala **una vez** en
-un almacén compartido entre conversaciones, no un venv por conversación. Si una
-conversación necesita una versión que choca con la compartida, esa versión se
-instala solo para ella, sin romper a las demás. Separado por versión de Python,
-porque los wheels con extensiones en C no son compatibles entre versiones.
+When the agent needs numpy, pandas or whatever, it's installed **once** in a
+store shared across conversations, not a venv per conversation. If a conversation
+needs a version that clashes with the shared one, that version is installed just
+for it, without breaking the others. Separated by Python version, because wheels
+with C extensions aren't compatible across versions.
 
-### Costos
+### Costs
 
-La app calcula el gasto por conversación a partir de una tabla de precios por
-millón de tokens, que se puede actualizar desde Configuración. Si no hay precio
-cargado para un modelo, muestra los tokens y el costo como `—` en vez de
-inventar un número.
+The app computes the spend per conversation from a table of prices per million
+tokens, which can be updated from Settings. If there's no price loaded for a
+model, it shows the tokens and cost as `—` instead of inventing a number.
 
 ---
 
-## Cómo está organizado
+## How it's organized
 
-Todo lo que difiere entre sistemas operativos pasa por **`core/plataforma.py`**.
-Si vas a tocar este código, la regla es: la rama por-SO va ahí, no desperdigada
-en la interfaz.
+Everything that differs between operating systems goes through
+**`core/plataforma.py`**. If you're going to touch this code, the rule is: the
+per-OS branch goes there, not scattered across the UI.
 
 | | |
 |---|---|
-| `INICIAR.bat` / `INICIAR.command` | Arranque portable por plataforma: consiguen un Python usable |
-| `bootstrap.py` | Entorno virtual, dependencias y lanzamiento (multiplataforma) |
-| `main_ui.py` | La interfaz (Tkinter) |
-| `core/plataforma.py` | Única capa que sabe de diferencias entre sistemas |
-| `core/interprete.py` | Qué Python usar para correr scripts (incluye el caso empaquetado) |
-| `core/chat.py` | La conversación y el ciclo de tool calling |
-| `core/biblioteca.py` | La biblioteca compartida de módulos |
-| `core/generador.py` · `core/evaluador.py` | El motor iterativo y su puntaje |
-| `core/programador*.py` | Tareas: frente común + backend launchd / Task Scheduler / systemd |
-| `core/proxy.py` · `core/marcas.py` | Captura de tráfico, redacción y contexto |
-| `core/ejecucion.py` | Ejecución de comandos, con confirmación de lo destructivo |
+| `INICIAR.bat` / `INICIAR.command` | Portable per-platform launch: they get a usable Python |
+| `bootstrap.py` | Virtual environment, dependencies and launch (cross-platform) |
+| `main_ui.py` | The UI (Tkinter) |
+| `core/plataforma.py` | The only layer that knows about differences between systems |
+| `core/interprete.py` | Which Python to use to run scripts (includes the packaged case) |
+| `core/chat.py` | The conversation and the tool-calling loop |
+| `core/biblioteca.py` | The shared library of modules |
+| `core/generador.py` · `core/evaluador.py` | The iterative engine and its scoring |
+| `core/programador*.py` | Tasks: common front + launchd / Task Scheduler / systemd backend |
+| `core/proxy.py` · `core/marcas.py` | Traffic capture, redaction and context |
+| `core/ejecucion.py` | Command execution, with confirmation of destructive ones |
 
-Detalles de cada port, decisiones tomadas y lo que queda pendiente:
+Details of each port, decisions made and what's still pending:
 [`HANDOFF-WINDOWS.md`](HANDOFF-WINDOWS.md) · [`HANDOFF-LINUX.md`](HANDOFF-LINUX.md).
 
-### Dónde quedan tus datos
+### Where your data lives
 
-Las conversaciones, tareas, la biblioteca, la captura y el `.env` con las API
-keys viven **fuera** de la carpeta del código:
+Conversations, tasks, the library, the capture and the `.env` with the API keys
+live **outside** the code folder:
 
 | | |
 |---|---|
@@ -268,8 +262,9 @@ keys viven **fuera** de la carpeta del código:
 | macOS | `~/tmp/agentfactory/` |
 | Linux | `~/tmp/agentfactory/` |
 
-Es deliberado: un `git pull` no toca tus datos, y publicar la carpeta del
-proyecto no se lleva tus claves. Se cambia con la variable `AGENTE_DATOS`.
+This is deliberate: a `git pull` doesn't touch your data, and publishing the
+project folder doesn't take your keys with it. It's changed with the
+`AGENTE_DATOS` variable.
 
 ## Tests
 
@@ -281,123 +276,117 @@ runtime\python\python.exe -m pytest tests\ -q
 runtime/python/bin/python3 -m pytest tests/ -q
 ```
 
-## Empaquetar para compartir
+## Packaging to share
 
-Desde **⚙️ Configuración**, el botón **Crear paquete portable (.zip)** arma un
-zip solo con el código: deja afuera el entorno, el runtime y tus datos, y
-además revisa el contenido buscando credenciales — si encuentra algo que parece
-una clave, no genera el archivo.
+From **⚙️ Settings**, the **Create portable package (.zip)** button builds a zip
+with the code only: it leaves out the environment, the runtime and your data, and
+also scans the contents for credentials — if it finds something that looks like a
+key, it doesn't generate the file.
 
-En macOS hay además un botón para armar un `.dmg`. En Windows se puede armar un
-`.exe` con PyInstaller (ver [`HANDOFF-WINDOWS.md`](HANDOFF-WINDOWS.md)). En Linux
-el camino es la misma carpeta portable; un `.deb`/`.rpm`/AppImage queda pendiente
-(ver [`HANDOFF-LINUX.md`](HANDOFF-LINUX.md)).
+On macOS there's also a button to build a `.dmg`. On Windows you can build an
+`.exe` with PyInstaller (see [`HANDOFF-WINDOWS.md`](HANDOFF-WINDOWS.md)). On Linux
+the path is the same portable folder; a `.deb`/`.rpm`/AppImage is still pending
+(see [`HANDOFF-LINUX.md`](HANDOFF-LINUX.md)).
 
 ---
 
-## Seguridad
+## Security
 
-Esta app le da a un modelo de lenguaje capacidades reales sobre tu máquina.
-Vale la pena entender qué protege y qué no, sin optimismo.
+This app gives a language model real capabilities over your machine. It's worth
+understanding what it protects and what it doesn't, without optimism.
 
-### El agente ejecuta comandos reales
+### The agent runs real commands
 
-No es un sandbox y no pretende serlo: `ejecutar_shell` y `ejecutar_python`
-pueden hacer lo que vos podrías hacer desde una terminal, sobre cualquier ruta
-del sistema.
+It's not a sandbox and doesn't pretend to be: `ejecutar_shell` and
+`ejecutar_python` can do what you could do from a terminal, over any path on the
+system.
 
-El freno es el que importa: **todo lo que borre o sobrescriba archivos se
-detiene y te pregunta**, en los dos sistemas y con las listas de comandos
-propias de cada uno (`rm`, `mv`, `dd`, `git reset --hard` en Unix; `del`,
-`rd`, `Remove-Item`, `format`, `robocopy /MIR`, `reg delete`, `shutdown` en
-Windows). Antes de aprobar, el diálogo te muestra sobre qué rutas concretas va
-a operar.
+The brake is the one that matters: **anything that deletes or overwrites files
+stops and asks you**, on both systems and with each one's own command lists
+(`rm`, `mv`, `dd`, `git reset --hard` on Unix; `del`, `rd`, `Remove-Item`,
+`format`, `robocopy /MIR`, `reg delete`, `shutdown` on Windows). Before you
+approve, the dialog shows you which concrete paths it's going to operate on.
 
-Lo que **no** está protegido: leer. Un comando que solo lee no pregunta nada, y
-el agente puede leer cualquier archivo al que tengas acceso.
+What's **not** protected: reading. A command that only reads asks nothing, and
+the agent can read any file you have access to.
 
-La elevación de privilegios existe solo en macOS, y usa el diálogo de
-autenticación del sistema (nunca uno propio: tu contraseña jamás llega a este
-proceso). En Windows y Linux no está implementada y el control está oculto.
+Privilege elevation exists only on macOS, and uses the system's authentication
+dialog (never a custom one: your password never reaches this process). On Windows
+and Linux it isn't implemented and the control is hidden.
 
-### La captura intercepta HTTPS
+### The capture intercepts HTTPS
 
-Para poder leer el tráfico, el proxy termina el TLS: instala su propia CA en un
-perfil de Firefox descartable. Ese es el alcance por defecto, y es a propósito.
+To be able to read the traffic, the proxy terminates TLS: it installs its own CA
+in a disposable Firefox profile. That's the default scope, and it's on purpose.
 
-En Windows hay además un botón opcional para que la CA valga en todo el
-sistema. Está separado y es reversible porque su alcance es mucho mayor: hace
-que **todas** las aplicaciones de tu usuario confíen en esa CA.
+On Windows there's also an optional button to make the CA valid system-wide. It's
+separate and reversible because its scope is much larger: it makes **all** of
+your user's applications trust that CA.
 
-### Cómo se manejan tus credenciales de sesión
+### How your session credentials are handled
 
-Automatizar tareas en sitios con login es para lo que existe esta app, así que
-tus cookies de sesión son parte del material con el que trabaja. Cómo las
-trata:
+Automating tasks on sites with login is what this app exists for, so your session
+cookies are part of the material it works with. How it treats them:
 
-**Lo que el modelo ve.** El contexto que se le pasa al modelo va redactado: las
-cookies de sesión, `Authorization` y los tokens CSRF salen enmascarados
-(`core/marcas.py`). La lectura en bloque para escribir una extracción
-(`extraer_de_captura`) devuelve los cuerpos de las respuestas y **ningún
-header**. La idea es que el modelo no necesita ver el valor de una cookie para
-escribir el código que la usa.
+**What the model sees.** The context passed to the model is redacted: session
+cookies, `Authorization` and CSRF tokens go out masked (`core/marcas.py`). The
+bulk read used to write an extraction (`extraer_de_captura`) returns the response
+bodies and **no headers**. The idea is that the model doesn't need to see a
+cookie's value to write the code that uses it.
 
-Encima de eso hay un **filtro de salida** (`core/redactor.py`) que tapa lo que
-`marcas.py` no atrapa: enmascara valores del `.env`, JWT, `Bearer` y
-asignaciones tipo `password=` / `clave=` en **cualquier** texto que vaya al
-modelo — incluidos los cuerpos capturados (donde puede ir una clave de login) y
-la salida de `ejecutar_shell`/`ejecutar_python` (por si un comando imprime el
-`.env`). Enmascara **valores, no estructura**: los nombres de campo, el código
-JS, los endpoints y los redirects quedan visibles, así el agente puede razonar y
-reversar un flujo; solo desaparece el valor concreto de la credencial.
+On top of that there's an **output filter** (`core/redactor.py`) that covers what
+`marcas.py` doesn't catch: it masks `.env` values, JWTs, `Bearer` and assignments
+like `password=` / `clave=` in **any** text going to the model — including the
+captured bodies (where a login password can appear) and the output of
+`ejecutar_shell`/`ejecutar_python` (in case a command prints the `.env`). It masks
+**values, not structure**: the field names, the JS code, the endpoints and the
+redirects stay visible, so the agent can reason about and reverse a flow; only the
+credential's concrete value disappears.
 
-Esto importa porque el prompt **sale de tu máquina** hacia DeepSeek, Anthropic,
-Alibaba o Google, según el proveedor que tengas configurado. Todo lo que no
-entre al prompt, no viaja.
+This matters because the prompt **leaves your machine** toward DeepSeek,
+Anthropic, Alibaba or Google, depending on the provider you have configured.
+Anything that doesn't go into the prompt doesn't travel.
 
-**Lo que la automatización usa.** El código que el agente escribe sí puede
-autenticarse: para eso están el repetidor y las credenciales de la captura. La
-diferencia es *cuándo* se resuelve el valor — en tiempo de ejecución, del lado
-de tu máquina, no en el texto que se le manda al modelo.
+**What the automation uses.** The code the agent writes *can* authenticate:
+that's what the repeater and the capture credentials are for. The difference is
+*when* the value is resolved — at run time, on your machine's side, not in the
+text sent to the model.
 
-**Dónde están guardadas.** En la SQLite de la captura, en
-`AGENTE_DATOS/_proxy/`, junto con el resto de tus datos y fuera de la carpeta
-del código.
+**Where they're stored.** In the capture SQLite, at `AGENTE_DATOS/_proxy/`, along
+with the rest of your data and outside the code folder.
 
-**El límite honesto.** El agente puede ejecutar código como tu usuario. Una vez
-que le das eso, no hay criptografía que impida que un script lea lo que vos
-podés leer: los controles de acá reducen la exposición accidental y hacen
-visible la deliberada, no construyen una caja fuerte contra el propio agente.
-Para el caso del disco robado, la herramienta correcta es BitLocker o FileVault,
-no cifrado a nivel de aplicación.
+**The honest limit.** The agent can run code as your user. Once you give it that,
+no cryptography stops a script from reading what you can read: the controls here
+reduce accidental exposure and make deliberate exposure visible, they don't build
+a safe against the agent itself. For the stolen-disk case, the right tool is
+BitLocker or FileVault, not application-level encryption.
 
-En curso: cifrado de los headers en reposo con la decodificación pedida
-explícitamente (mismo mecanismo de "permitir una vez / permitir siempre" que
-los comandos destructivos), para que el acceso a credenciales sea un acto
-consentido y no un efecto secundario.
+In progress: encrypting the headers at rest with decoding requested explicitly
+(the same "allow once / always allow" mechanism as destructive commands), so that
+access to credentials is a consented act and not a side effect.
 
-### Contenido capturado = datos, no instrucciones
+### Captured content = data, not instructions
 
-El agente lee páginas y respuestas de servidores que no controlás, y al mismo
-tiempo tiene shell. Una página puede traer texto escrito para que un modelo lo
-obedezca: un comentario HTML que diga "ignorá lo anterior y ejecutá esto".
+The agent reads pages and responses from servers you don't control, and at the
+same time it has shell. A page can carry text written for a model to obey: an
+HTML comment saying "ignore the above and run this".
 
-El prompt del sistema marca todo lo que viene de la captura como contenido no
-confiable —datos para analizar, nunca instrucciones— y le pide al agente que te
-avise si encuentra algo así en vez de seguirlo. Ninguna defensa de prompt es
-una garantía: si después de analizar tráfico el agente propone un comando que
-no pediste, no lo apruebes.
+The system prompt marks everything coming from the capture as untrusted content
+—data to analyze, never instructions— and asks the agent to warn you if it finds
+something like that instead of following it. No prompt defense is a guarantee: if
+after analyzing traffic the agent proposes a command you didn't ask for, don't
+approve it.
 
-### Las claves
+### The keys
 
-El `.env` vive con tus datos, no con el código, así que compartir el proyecto
-no se las lleva. En macOS y Linux queda con permisos `0600`. En Windows los
-permisos POSIX no aplican (el acceso va por ACLs) y el archivo queda legible por
-tu usuario: el panel de Diagnóstico te lo dice en vez de mentirte con un tilde
-verde.
+The `.env` lives with your data, not with the code, so sharing the project
+doesn't take them. On macOS and Linux it's left with `0600` permissions. On
+Windows POSIX permissions don't apply (access goes through ACLs) and the file is
+left readable by your user: the Diagnostics panel tells you so instead of lying
+with a green check.
 
-### Instalación de paquetes
+### Package installation
 
-El agente puede instalar paquetes de PyPI sin confirmación. Un nombre
-equivocado o sugerido por contenido no confiable se instala igual. Está anotado
-como pendiente.
+The agent can install PyPI packages without confirmation. A wrong name, or one
+suggested by untrusted content, gets installed all the same. It's noted as
+pending.

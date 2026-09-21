@@ -1,113 +1,112 @@
-# AgentFactory en Windows — estado
+# AgentFactory on Windows — status
 
-El port a Windows **está hecho y probado** en Windows 10 Pro 19045 (es-ES),
-sobre una máquina **sin Python instalado**. Este documento reemplaza al handoff
-original, que describía la tarea pendiente.
+The Windows port is **done and tested** on Windows 10 Pro 19045 (es-ES), on a
+machine **with no Python installed**. This document replaces the original
+handoff, which described the pending work.
 
-## Cómo se instala en otra Windows
+## How to install it on another Windows
 
-**Camino recomendado — carpeta portable (1,1 MB):**
+**Recommended path — portable folder (1.1 MB):**
 
-1. Descomprimir `AgentFactory-windows.zip` entero en una carpeta del usuario.
-2. Doble clic en `INICIAR.bat`.
+1. Unzip `AgentFactory-windows.zip` in full into a user folder.
+2. Double-click `INICIAR.bat`.
 
-La primera vez baja un Python 3.12.13 (~30 MB) de `python-build-standalone`, lo
-deja en `runtime/` adentro de la misma carpeta, instala `requirements.txt` y
-abre la app. No instala nada en el sistema, no pide administrador y no toca el
-registro. Los arranques siguientes son directos y sin consola.
+The first time it downloads a Python 3.12.13 (~30 MB) from
+`python-build-standalone`, drops it in `runtime/` inside the same folder,
+installs `requirements.txt` and opens the app. It installs nothing on the system,
+asks for no administrator and doesn't touch the registry. Subsequent launches are
+direct and console-free.
 
-**Camino alternativo — `.exe` (239 MB, `dist/AgentFactory/`):** ver más abajo.
+**Alternative path — `.exe` (239 MB, `dist/AgentFactory/`):** see below.
 
-## Qué se probó, y con qué resultado
+## What was tested, and with what result
 
 | | |
 |---|---|
-| Arranque en máquina sin Python | OK — detecta y descarta el stub de la Microsoft Store, baja el runtime, instala y abre |
-| Instalación desde el zip en carpeta limpia | OK — probado descomprimiendo y arrancando como lo haría quien lo recibe |
-| mitmproxy en un hilo secundario | OK — HTTP 200 y HTTPS 200 a través del proxy, 2 flujos capturados, apagado limpio |
-| Planificador (Task Scheduler) | OK — tarea creada, disparada, corrida registrada, log en UTF-8, borrado verificado |
-| Firefox de captura | OK — lo ubica por el registro y lo lanza con `-no-remote -profile` |
-| Guard de comandos destructivos | OK — `del`, `Remove-Item`, `rd`, `format`, `robocopy /MIR`, `reg delete`, `shutdown` piden confirmación |
-| Emoji en consola cp850 | OK — antes moría con `UnicodeEncodeError` en la primera línea |
-| Suite de tests | 48 passed |
-| `.exe` con PyInstaller | Arranca y abre la UI |
+| Startup on a machine without Python | OK — detects and discards the Microsoft Store stub, downloads the runtime, installs and opens |
+| Install from the zip into a clean folder | OK — tested by unzipping and starting as the recipient would |
+| mitmproxy on a secondary thread | OK — HTTP 200 and HTTPS 200 through the proxy, 2 flows captured, clean shutdown |
+| Scheduler (Task Scheduler) | OK — task created, fired, run logged, log in UTF-8, deletion verified |
+| Capture Firefox | OK — locates it via the registry and launches it with `-no-remote -profile` |
+| Destructive-command guard | OK — `del`, `Remove-Item`, `rd`, `format`, `robocopy /MIR`, `reg delete`, `shutdown` ask for confirmation |
+| Emoji in a cp850 console | OK — previously died with `UnicodeEncodeError` on the first line |
+| Test suite | 48 passed |
+| `.exe` with PyInstaller | Starts and opens the UI |
 
-## Arquitectura del port
+## Port architecture
 
-Todo lo que difiere entre sistemas pasa por **`core/plataforma.py`**. La regla
-al tocar este código: si algo cambia según el SO, la rama va ahí, no en la UI.
+Everything that differs between systems goes through **`core/plataforma.py`**.
+The rule when touching this code: if something changes by OS, the branch goes
+there, not in the UI.
 
-Módulos nuevos:
+New modules:
 
-- **`core/plataforma.py`** (ampliado) — codificación de consola, whitelist de
-  lectura, textos del prompt por SO, ubicación de Firefox, DPI, patrones
-  destructivos de Windows.
-- **`core/interprete.py`** — decide qué Python usar. Único lugar que sabe de
-  `sys.frozen`; sin esto, empaquetar la app hace que `ejecutar_python` relance
-  la aplicación entera en vez de correr el script.
-- **`core/consola.py`** — salida en UTF-8 en los puntos de entrada de consola.
-- **`core/programador.py`** — pasó a ser el frente común. Los backends son
-  `programador_launchd.py` (macOS), `programador_schtasks.py` (Windows) y
-  `programador_nulo.py` (resto). La interfaz pública no cambió, así que
-  `main_ui.py` no se tocó para esto.
-- **`core/win_icono.py`** — ícono de barra de tareas + AppUserModelID. Espejo
-  de `mac_icono.py`, mismo contrato best-effort.
+- **`core/plataforma.py`** (expanded) — console encoding, read whitelist, per-OS
+  prompt texts, Firefox location, DPI, Windows destructive patterns.
+- **`core/interprete.py`** — decides which Python to use. The only place that
+  knows about `sys.frozen`; without this, packaging the app makes
+  `ejecutar_python` relaunch the whole application instead of running the script.
+- **`core/consola.py`** — UTF-8 output at the console entry points.
+- **`core/programador.py`** — became the common front. The backends are
+  `programador_launchd.py` (macOS), `programador_schtasks.py` (Windows) and
+  `programador_nulo.py` (the rest). The public interface didn't change, so
+  `main_ui.py` wasn't touched for this.
+- **`core/win_icono.py`** — taskbar icon + AppUserModelID. Mirror of
+  `mac_icono.py`, same best-effort contract.
 
-## Decisiones que conviene conocer antes de tocar esto
+## Decisions worth knowing before touching this
 
-**El planificador usa XML, no `schtasks /SC`.** Las abreviaturas de día de
-`/SC WEEKLY /D` están **localizadas**: en un Windows en español no son
-`MON,TUE,WED` sino `LUN,MAR,MIÉ`. Con `/SC` las tareas semanales se crearían
-mal o directamente fallarían, con un error que no menciona el idioma. El XML es
-independiente del idioma y además permite apagar `DisallowStartIfOnBatteries`,
-que viene en **true**: sin eso, en una laptop a batería la tarea nunca corre.
-El XML se escribe en **UTF-16 con BOM**; en UTF-8, `schtasks` lo rechaza con un
-"The task XML is malformed" que no ayuda.
+**The scheduler uses XML, not `schtasks /SC`.** The day abbreviations for
+`/SC WEEKLY /D` are **localized**: on a Spanish Windows they aren't
+`MON,TUE,WED` but `LUN,MAR,MIÉ`. With `/SC`, weekly tasks would be created wrong
+or fail outright, with an error that doesn't mention the language. The XML is
+language-independent and also lets you turn off `DisallowStartIfOnBatteries`,
+which comes as **true**: without that, on a laptop on battery the task never
+runs. The XML is written in **UTF-16 with BOM**; in UTF-8, `schtasks` rejects it
+with a "The task XML is malformed" that doesn't help.
 
-**No hay un `.cmd` envolvente para las tareas.** `schtasks` no sabe pasar
-variables de entorno, y la solución obvia (un `.cmd` que las setee) es un
-proceso de consola: le haría parpadear una ventana negra a la persona en cada
-corrida. En vez de eso, `correr_tarea.py` acepta `--datos` y `--app`, y se lo
-lanza con `pythonw.exe`.
+**There's no wrapper `.cmd` for the tasks.** `schtasks` can't pass environment
+variables, and the obvious fix (a `.cmd` that sets them) is a console process: it
+would flash a black window at the person on every run. Instead, `correr_tarea.py`
+accepts `--datos` and `--app`, and it's launched with `pythonw.exe`.
 
-**El certificado de la captura NO se instala solo en Windows.** El `certutil`
-de NSS —el que escribe en el `cert9.db` de Firefox— no viene con Firefox, y el
-`certutil.exe` del PATH es el de Microsoft, con otra sintaxis. El camino por
-defecto es la instalación manual por mitm.it, cuyo alcance es el perfil
-descartable. `core/proxy.py:confiar_ca_en_windows()` ofrece la alternativa
-automática (almacén del usuario + `security.enterprise_roots`), pero es un
-botón aparte a propósito: hace que **todas** las aplicaciones de esa cuenta
-confíen en la CA de mitmproxy, un alcance bastante mayor que el de macOS.
-`quitar_ca_de_windows()` lo revierte.
+**The capture certificate does NOT install itself on Windows.** The NSS
+`certutil` —the one that writes to Firefox's `cert9.db`— doesn't ship with
+Firefox, and the `certutil.exe` on the PATH is Microsoft's, with different
+syntax. The default path is the manual install via mitm.it, whose scope is the
+disposable profile. `core/proxy.py:confiar_ca_en_windows()` offers the automatic
+alternative (user store + `security.enterprise_roots`), but it's a separate
+button on purpose: it makes **all** of that account's applications trust the
+mitmproxy CA, a considerably larger scope than on macOS.
+`quitar_ca_de_windows()` reverts it.
 
-**En Windows no hay elevación de privilegios.** `ejecutar_como_admin` sigue
-siendo solo de macOS y el checkbox "Admin" se oculta. Contarle al modelo de una
-capacidad que no tiene solo produce pedidos rechazados.
+**On Windows there's no privilege elevation.** `ejecutar_como_admin` remains
+macOS-only and the "Admin" checkbox is hidden. Telling the model about a
+capability it doesn't have only produces rejected requests.
 
-## Bugs preexistentes que se arreglaron de paso
+## Preexisting bugs fixed along the way
 
-No eran del port, pero estaban en el camino:
+They weren't part of the port, but they were in the path:
 
-1. **El zip traía `.requisitos-instalados`.** Su hash coincidía con el
-   `requirements.txt` vigente, así que en una máquina nueva `bootstrap.py`
-   salteaba `pip install` y moría después en la verificación. Ahora el sello
-   vive adentro de `venv/` o `runtime/`, que nunca viajan.
-2. **`crear_zip()` fallaba siempre, en cualquier sistema.** `ARCHIVOS_REQUERIDOS`
-   exigía archivos del bundle `.app` que no existen en este árbol.
-3. **El guard de comandos destructivos no cubría Windows.** `plataforma.py`
-   tenía la lista escrita desde antes, pero `analizar_riesgo()` nunca la
-   llamaba: `del` y `Remove-Item` se ejecutaban sin preguntar.
-4. **`crear_zip()` armaba zips inválidos en Windows.** Las entradas salían con
-   `\`; descomprimido en macOS daba archivos llamados `AgentFactory\core\chat.py`.
-5. **El diagnóstico avisaba en falso.** En Windows `chmod(0o600)` "funciona"
-   pero reporta `0o666`, así que decía "otros usuarios pueden leer tus claves"
-   en cada arranque.
-6. **`crear_zip_portable()` existía sin botón.** Ahora es el botón que ocupa el
-   lugar del `.dmg` fuera de macOS.
+1. **The zip shipped `.requisitos-instalados`.** Its hash matched the current
+   `requirements.txt`, so on a fresh machine `bootstrap.py` skipped `pip install`
+   and then died at verification. Now the marker lives inside `venv/` or
+   `runtime/`, which never travel.
+2. **`crear_zip()` always failed, on any system.** `ARCHIVOS_REQUERIDOS` demanded
+   files from the `.app` bundle that don't exist in this tree.
+3. **The destructive-command guard didn't cover Windows.** `plataforma.py` had
+   the list written from before, but `analizar_riesgo()` never called it: `del`
+   and `Remove-Item` ran without asking.
+4. **`crear_zip()` built invalid zips on Windows.** The entries came out with
+   `\`; unzipped on macOS it produced files named `AgentFactory\core\chat.py`.
+5. **Diagnostics warned falsely.** On Windows `chmod(0o600)` "works" but reports
+   `0o666`, so it said "other users can read your keys" on every startup.
+6. **`crear_zip_portable()` existed without a button.** Now it's the button that
+   takes the place of the `.dmg` outside macOS.
 
-## Sobre el `.exe`
+## About the `.exe`
 
-Se arma con:
+It's built with:
 
 ```
 runtime\python\python.exe -m PyInstaller --noconfirm --onedir --windowed ^
@@ -118,35 +117,35 @@ runtime\python\python.exe -m PyInstaller --noconfirm --onedir --windowed ^
   main_ui.py
 ```
 
-Y **hay que copiarle un intérprete al lado**, en
-`dist/AgentFactory/runtime/python/`: la app necesita un Python real para
-`ejecutar_python`, `pip` y las tareas programadas, y el intérprete embebido de
-PyInstaller no sirve para eso. Sin él, `core/interprete.py` devuelve el
-centinela `SIN_INTERPRETE` en vez de caer en el stub de la Store.
+And **you have to copy an interpreter next to it**, in
+`dist/AgentFactory/runtime/python/`: the app needs a real Python for
+`ejecutar_python`, `pip` and scheduled tasks, and PyInstaller's embedded
+interpreter is no good for that. Without it, `core/interprete.py` returns the
+`SIN_INTERPRETE` sentinel instead of falling back to the Store stub.
 
-Dos cosas que costaron y conviene no volver a descubrir:
+Two things that were costly and worth not rediscovering:
 
-- `main_ui._resolver_instalacion()` y `rutas.dir_app()` verificaban que
-  existiera `core/chat.py` **como archivo**. Congelado no existe: los módulos
-  viven adentro del ejecutable. La app mostraba un cuadro de error y salía.
-  Ambos tienen ahora una rama `sys.frozen`.
-- `--onedir` y no `--onefile`: onefile reextrae ~240 MB en `%TEMP%` en cada
-  arranque y dispara heurísticas de antivirus.
+- `main_ui._resolver_instalacion()` and `rutas.dir_app()` checked that
+  `core/chat.py` existed **as a file**. Frozen it doesn't exist: the modules live
+  inside the executable. The app showed an error box and quit. Both now have a
+  `sys.frozen` branch.
+- `--onedir` and not `--onefile`: onefile re-extracts ~240 MB into `%TEMP%` on
+  every launch and trips antivirus heuristics.
 
-**Sigue siendo peor que la carpeta portable**: 239 MB contra 1,1 MB, no está
-firmado (SmartScreen igual), y el historial de versiones (`core/versiones.py`)
-no funciona porque rastrea archivos `.py` en disco. Se entrega por si hace
-falta un doble clic sin descarga inicial, pero la recomendación es el zip.
+**It's still worse than the portable folder**: 239 MB against 1.1 MB, it isn't
+signed (SmartScreen anyway), and the version history (`core/versiones.py`) doesn't
+work because it tracks `.py` files on disk. It's provided in case a double-click
+without an initial download is needed, but the recommendation is the zip.
 
-## Lo que queda pendiente
+## What's still pending
 
-- **Notificaciones de tareas en Windows.** El toast nativo necesita un
-  AppUserModelID registrado y una vuelta por WinRT. Por ahora el resultado de
-  cada corrida se ve en la pestaña Tareas.
-- **Repaso visual de la interfaz.** `main_ui.py` tiene medidas en píxeles
-  ajustadas en una Mac; con DPI awareness ya no se ve borrosa, pero al 150% de
-  escala conviene revisarla con calma. Escape: `AGENTE_DPI=0`.
-- **Linux.** `programador_nulo.py` devuelve un error claro en vez de fingir.
-- **`.msi`.** No se hizo. Saldría de envolver el `.onedir` con WiX o Inno
-  Setup; solo tiene sentido si se quiere una instalación "de verdad" en
-  Archivos de programa, que además exigiría firmar el binario.
+- **Task notifications on Windows.** The native toast needs a registered
+  AppUserModelID and a trip through WinRT. For now the result of each run shows on
+  the Tasks tab.
+- **Visual review of the UI.** `main_ui.py` has pixel measurements tuned on a
+  Mac; with DPI awareness it's no longer blurry, but at 150% scale it's worth
+  reviewing carefully. Escape hatch: `AGENTE_DPI=0`.
+- **Linux.** `programador_nulo.py` returns a clear error instead of pretending.
+- **`.msi`.** Not done. It would come from wrapping the `.onedir` with WiX or Inno
+  Setup; it only makes sense if you want a "real" install into Program Files,
+  which would also require signing the binary.

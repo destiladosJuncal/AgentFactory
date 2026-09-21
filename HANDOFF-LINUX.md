@@ -1,13 +1,13 @@
-# AgentFactory en Linux — estado
+# AgentFactory on Linux — status
 
-El soporte para Linux (Debian/Ubuntu, Fedora/RHEL, openSUSE y derivados) **está
-escrito y probado en todo lo verificable desde macOS**, pero **todavía no se
-corrió en una máquina Linux real**. Este documento dice qué hay y qué falta
-confirmar, para cerrarlo en un Debian y un RHEL de verdad.
+Linux support (Debian/Ubuntu, Fedora/RHEL, openSUSE and derivatives) is
+**written and tested for everything verifiable from macOS**, but has **not yet
+been run on a real Linux machine**. This document says what's there and what's
+left to confirm, so it can be closed out on a real Debian and a real RHEL.
 
-## Cómo se corre
+## How it runs
 
-Un solo camino, portable:
+A single, portable path:
 
 ```
 git clone https://github.com/destiladosJuncal/AgentFactory.git
@@ -15,64 +15,65 @@ cd AgentFactory
 ./INICIAR.sh
 ```
 
-`INICIAR.sh` busca un Python 3.12+ **con tkinter**; si no lo hay, baja uno
-(~30 MB, `python-build-standalone`) a `runtime/` dentro de la carpeta, instala
-`requirements.txt` y abre la app. No instala nada en el sistema ni pide sudo.
-Debian y RHEL comparten todo lo que importa (bash + systemd), así que **el mismo
-build cubre ambos** — no hay ramas por distro.
+`INICIAR.sh` looks for a Python 3.12+ **with tkinter**; if there isn't one, it
+downloads one (~30 MB, `python-build-standalone`) to `runtime/` inside the
+folder, installs `requirements.txt` and opens the app. It installs nothing on the
+system and asks for no sudo. Debian and RHEL share everything that matters
+(bash + systemd), so **the same build covers both** — there are no per-distro
+branches.
 
-## Arquitectura del port
+## Port architecture
 
-Todo lo que difiere por SO ya vivía en `core/plataforma.py` y en los backends
-del scheduler; el "resto" (Linux) estaba casi listo. Lo que se agregó:
+Everything that differs by OS already lived in `core/plataforma.py` and in the
+scheduler backends; the "rest" (Linux) was almost ready. What was added:
 
-- **`INICIAR.sh`** — arranque portable (arch x86_64 / aarch64, descarga con
-  curl o wget). Espejo de `INICIAR.command`.
-- **`core/programador_systemd.py`** — backend del planificador vía **timers de
-  usuario** (`systemctl --user`), sin sudo. Intervalo → `OnUnitActiveSec`;
-  diario/semanal → `OnCalendar` (días en inglés, independiente del idioma, a
-  diferencia de schtasks en Windows).
-- **`core/programador.py`** — el dispatcher ahora elige systemd en Linux.
-- **`correr_tarea.py`** — notificaciones con `notify-send` (libnotify).
-- **`core/plataforma.py`** — `ES_LINUX`. Lo demás (xdg-open, `which("firefox")`,
-  shell bash, permisos POSIX, consola UTF-8, sin DPI) ya contemplaba Linux.
+- **`INICIAR.sh`** — portable launch (x86_64 / aarch64 arch, download with curl
+  or wget). Mirror of `INICIAR.command`.
+- **`core/programador_systemd.py`** — scheduler backend via **user timers**
+  (`systemctl --user`), no sudo. Interval → `OnUnitActiveSec`; daily/weekly →
+  `OnCalendar` (days in English, language-independent, unlike schtasks on
+  Windows).
+- **`core/programador.py`** — the dispatcher now picks systemd on Linux.
+- **`correr_tarea.py`** — notifications with `notify-send` (libnotify).
+- **`core/plataforma.py`** — `ES_LINUX`. The rest (xdg-open, `which("firefox")`,
+  bash shell, POSIX permissions, UTF-8 console, no DPI) already accounted for
+  Linux.
 
-`lanzar_firefox` y `interprete()` ya soportaban Linux; no se tocaron.
+`lanzar_firefox` and `interprete()` already supported Linux; they weren't touched.
 
-## Verificado desde macOS
+## Verified from macOS
 
-- 123 tests en verde (suite completa).
-- Generación de units systemd correcta para intervalo, diario y semanal
+- 123 tests green (full suite).
+- Correct systemd unit generation for interval, daily and weekly
   (`Mon,Wed,Fri *-*-* 08:30:00`).
-- Sintaxis de `INICIAR.sh` (`bash -n`) y de todos los módulos.
-- El dispatcher resuelve el backend por SO sin romper imports.
+- Syntax of `INICIAR.sh` (`bash -n`) and of all modules.
+- The dispatcher resolves the backend by OS without breaking imports.
 
-## Qué falta confirmar en Linux real (Debian **y** RHEL)
+## What's left to confirm on real Linux (Debian **and** RHEL)
 
-1. **tkinter del runtime abre.** El `python-build-standalone` trae tcl/tk, pero
-   tk hace dlopen de libs de X11 del sistema. En un escritorio suelen estar; si
-   no, `INICIAR.sh` ya imprime el `apt`/`dnf` exacto que falta. Confirmar que la
-   UI abre en ambos.
-2. **systemd de usuario.** `systemctl --user` requiere sesión de usuario (en un
-   contenedor pelado puede no haber). Verificar: crear una tarea, que aparezca
-   `enable --now`, que dispare, que registre la corrida, y que `borrar` limpie
-   los units. Para que corra con el usuario **deslogueado**:
-   `loginctl enable-linger $USER` (una vez) — documentarlo en la UI si hace
-   falta.
-3. **Firefox de captura.** `which("firefox")` + `-no-remote -profile`. En
-   distros donde Firefox es un **Snap/Flatpak**, el `-profile` a una carpeta
-   arbitraria puede no respetarse por el sandbox: probar, y si molesta, preferir
-   el paquete nativo o documentar la limitación.
-4. **Wayland vs X11.** tkinter corre sobre XWayland sin problema en general;
-   confirmar que la ventana no sale borrosa en HiDPI (no hay compensación de DPI
-   en Linux por ahora, igual que macOS).
-5. **notify-send** presente (viene con `libnotify-bin` en Debian). Best-effort:
-   si falta, la corrida igual queda en la pestaña Tareas.
+1. **The runtime's tkinter opens.** `python-build-standalone` ships tcl/tk, but
+   tk dlopens the system's X11 libs. On a desktop they're usually there; if not,
+   `INICIAR.sh` already prints the exact `apt`/`dnf` that's missing. Confirm the
+   UI opens on both.
+2. **User systemd.** `systemctl --user` requires a user session (a bare container
+   may not have one). Verify: create a task, that `enable --now` shows up, that
+   it fires, that it logs the run, and that `delete` cleans up the units. For it
+   to run with the user **logged out**: `loginctl enable-linger $USER` (once) —
+   document it in the UI if needed.
+3. **Capture Firefox.** `which("firefox")` + `-no-remote -profile`. On distros
+   where Firefox is a **Snap/Flatpak**, `-profile` to an arbitrary folder may not
+   be honored due to the sandbox: test it, and if it's a problem, prefer the
+   native package or document the limitation.
+4. **Wayland vs X11.** tkinter runs on XWayland fine in general; confirm the
+   window doesn't come out blurry on HiDPI (there's no DPI compensation on Linux
+   for now, same as macOS).
+5. **notify-send** present (ships with `libnotify-bin` on Debian). Best-effort:
+   if it's missing, the run still lands on the Tasks tab.
 
-## Pendiente conocido
+## Known pending items
 
-- **HiDPI en Linux.** Sin escalado explícito, como en macOS. Si se ve chico al
-  200%, se resuelve igual que se hará en Mac (un `tk scaling`).
-- **Empaquetado nativo (.deb/.rpm/AppImage).** No hay; la recomendación es la
-  carpeta portable, igual que en las otras plataformas. Un `.desktop` para que
-  aparezca en el menú de aplicaciones sería el siguiente paso.
+- **HiDPI on Linux.** No explicit scaling, as on macOS. If it looks small at
+  200%, it's solved the same way it will be on Mac (a `tk scaling`).
+- **Native packaging (.deb/.rpm/AppImage).** None; the recommendation is the
+  portable folder, same as on the other platforms. A `.desktop` so it shows up in
+  the applications menu would be the next step.

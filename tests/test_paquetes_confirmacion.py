@@ -29,18 +29,18 @@ def entorno(tmp_path, monkeypatch):
     """Almacenes vacíos y pip simulado, para no bajar nada de la red."""
     compartido = tmp_path / "compartido"
     compartido.mkdir()
-    monkeypatch.setattr(paquetes, "dir_compartido", lambda: compartido)
+    monkeypatch.setattr(paquetes, "shared_dir", lambda: compartido)
 
     llamadas = []
 
     def pip_falso(requisito, destino):
         llamadas.append(requisito)
         # Simula que quedó instalado, creando el dist-info que lee instalados().
-        nombre = paquetes.normalizar(requisito.split("=")[0].split("<")[0].split(">")[0])
+        nombre = paquetes.normalize(requisito.split("=")[0].split("<")[0].split(">")[0])
         (Path(destino) / f"{nombre}-1.0.dist-info").mkdir(parents=True, exist_ok=True)
         return True, "ok"
 
-    monkeypatch.setattr(paquetes, "_pip_instalar", pip_falso)
+    monkeypatch.setattr(paquetes, "_pip_install", pip_falso)
     monkeypatch.setattr(ejecucion, "CONFIRMADOR", None)
     ejecucion._APROBADAS_SIEMPRE.clear()
     return llamadas
@@ -61,7 +61,7 @@ def test_instalar_algo_nuevo_pregunta(entorno, monkeypatch):
     monkeypatch.setattr(ejecucion, "CONFIRMADOR", _confirmador("permitir", visto))
     permisos = set()
 
-    r = paquetes.instalar("numpy", permisos=permisos)
+    r = paquetes.install("numpy", permisos=permisos)
 
     assert len(visto) == 1, "tendria que haber preguntado exactamente una vez"
     assert "numpy" in visto[0]["resumen"]
@@ -75,7 +75,7 @@ def test_decir_no_no_ejecuta_pip(entorno, monkeypatch):
     monkeypatch.setattr(ejecucion, "CONFIRMADOR", _confirmador("no"))
     permisos = set()
 
-    r = paquetes.instalar("paquete-raro", permisos=permisos)
+    r = paquetes.install("paquete-raro", permisos=permisos)
 
     assert r.get("rechazado_por_el_usuario") is True
     assert entorno == [], "pip no tendria que haberse ejecutado"
@@ -88,9 +88,9 @@ def test_permitir_siempre_no_vuelve_a_preguntar(entorno, monkeypatch):
     monkeypatch.setattr(ejecucion, "CONFIRMADOR", _confirmador("siempre", visto))
     permisos = set()
 
-    paquetes.instalar("numpy", permisos=permisos)
-    paquetes.instalar("pandas", permisos=permisos)
-    paquetes.instalar("requests", permisos=permisos)
+    paquetes.install("numpy", permisos=permisos)
+    paquetes.install("pandas", permisos=permisos)
+    paquetes.install("requests", permisos=permisos)
 
     assert len(visto) == 1, "solo el primero tendria que preguntar"
     assert entorno == ["numpy", "pandas", "requests"]
@@ -104,8 +104,8 @@ def test_el_permiso_es_por_conversacion(entorno, monkeypatch):
     monkeypatch.setattr(ejecucion, "CONFIRMADOR", _confirmador("siempre", visto))
 
     permisos_a, permisos_b = set(), set()
-    paquetes.instalar("numpy", permisos=permisos_a)
-    paquetes.instalar("pandas", permisos=permisos_b)
+    paquetes.install("numpy", permisos=permisos_a)
+    paquetes.install("pandas", permisos=permisos_b)
 
     assert len(visto) == 2, "la segunda conversacion tiene que preguntar de nuevo"
     assert "pip" in permisos_a and "pip" in permisos_b
@@ -118,9 +118,9 @@ def test_si_ya_estaba_no_pregunta(entorno, monkeypatch):
     monkeypatch.setattr(ejecucion, "CONFIRMADOR", _confirmador("permitir", visto))
     permisos = set()
 
-    paquetes.instalar("numpy", permisos=permisos)   # instala y pregunta
+    paquetes.install("numpy", permisos=permisos)   # instala y pregunta
     visto.clear()
-    r = paquetes.instalar("numpy", permisos=set())  # otra conversacion, sin permiso
+    r = paquetes.install("numpy", permisos=set())  # otra conversacion, sin permiso
 
     assert r["estado"] == "ya_estaba"
     assert visto == [], "reutilizar del almacen no necesita autorizacion"
@@ -130,6 +130,6 @@ def test_si_ya_estaba_no_pregunta(entorno, monkeypatch):
 
 def test_sin_confirmador_se_bloquea(entorno, monkeypatch):
     monkeypatch.setattr(ejecucion, "CONFIRMADOR", None)
-    r = paquetes.instalar("numpy", permisos=set())
+    r = paquetes.install("numpy", permisos=set())
     assert r.get("requeria_confirmacion") is True
     assert entorno == []

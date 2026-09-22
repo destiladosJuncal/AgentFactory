@@ -474,7 +474,7 @@ def ejecutar_shell(comando: str, directorio: str = "", timeout: Any = TIMEOUT_DE
             timeout=_timeout(timeout), **extra,
             # PYTHONPATH apuntando al almacén compartido (+ overlay local): así
             # un script usa las bibliotecas ya instaladas sin volver a bajarlas.
-            env=paquetes.entorno(base),
+            env=paquetes.environment(base),
         )
     except subprocess.TimeoutExpired:
         return {"error": f"El comando excedió los {_timeout(timeout)}s y se cortó"}
@@ -507,7 +507,7 @@ def ejecutar_python(codigo: str, directorio: str = "", timeout: Any = TIMEOUT_DE
             proc = subprocess.run(
                 [interprete.interpreter(), str(script)], cwd=str(cwd),
                 capture_output=True, text=True, timeout=_timeout(timeout),
-                env=paquetes.entorno(base),
+                env=paquetes.environment(base),
             )
         except subprocess.TimeoutExpired:
             return {"error": f"El script excedió los {_timeout(timeout)}s y se cortó"}

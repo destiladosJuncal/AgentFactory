@@ -1,22 +1,27 @@
 """
-Paquetes de Python compartidos entre conversaciones.
+Python packages shared across conversations.
 
-El problema que resuelve: cada conversación que necesitaba numpy/scipy/cv2 se
-armaba su propio venv adentro del workspace. Diez conversaciones con las mismas
-bibliotecas pesadas = diez copias de cientos de MB cada una.
+The problem it solves: every conversation that needed numpy/scipy/cv2 built its
+own venv inside the workspace. Ten conversations with the same heavy libraries =
+ten copies of hundreds of MB each.
 
-La solución es un almacén COMPARTIDO y un overlay LOCAL solo cuando hace falta:
+The solution is a SHARED store and a LOCAL overlay only when needed:
 
-    $DATOS/_paquetes/py3.12/          <- compartido: se instala UNA vez
-    <workspace>/.paquetes/py3.12/     <- local: solo si hay conflicto de versión
+    $DATOS/_paquetes/py3.12/          <- shared: installed ONCE
+    <workspace>/.paquetes/py3.12/     <- local: only on a version conflict
 
-Al ejecutar, el PYTHONPATH se arma como [local, compartido]: lo local gana. Así
-una conversación que necesita numpy==1.26 no rompe a las demás que usan 2.x, y
-el resto de las bibliotecas las sigue compartiendo igual.
+At run time, PYTHONPATH is built as [local, shared]: local wins. So a
+conversation that needs numpy==1.26 doesn't break the others using 2.x, and the
+rest of the libraries are still shared all the same.
 
-Se separa por versión de Python (py3.12, py3.9...) a propósito: los wheels con
-extensiones en C no son compatibles entre versiones, y mezclarlos da errores de
-import imposibles de diagnosticar.
+Split by Python version (py3.12, py3.9...) on purpose: wheels with C extensions
+aren't compatible across versions, and mixing them gives import errors that are
+impossible to diagnose.
+
+(The LLM-facing tool names and schema descriptions, the returned dict keys and
+the `permisos` parameter stay Spanish on purpose: the tool names are part of the
+conversation-history contract, and `permisos` threads through the permission
+system — both move in their own later phase.)
 """
 
 import os
@@ -28,107 +33,107 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core import interprete
 
-TIMEOUT_INSTALACION = 600   # instalar scipy/torch lleva su rato
+INSTALL_TIMEOUT = 600   # installing scipy/torch takes a while
 
 
-def _etiqueta_python() -> str:
+def _python_tag() -> str:
     return f"py{sys.version_info.major}.{sys.version_info.minor}"
 
 
-def dir_compartido() -> Path:
-    """Almacén compartido por TODAS las conversaciones."""
+def shared_dir() -> Path:
+    """Store shared by ALL conversations."""
     from core.rutas import dir_datos
-    d = dir_datos() / "_paquetes" / _etiqueta_python()
+    d = dir_datos() / "_paquetes" / _python_tag()
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def dir_local(workspace) -> Optional[Path]:
-    """Overlay de esta conversación. Solo se usa ante un conflicto de versión."""
+def local_dir(workspace) -> Optional[Path]:
+    """This conversation's overlay. Only used on a version conflict."""
     if not workspace:
         return None
-    return Path(workspace) / ".paquetes" / _etiqueta_python()
+    return Path(workspace) / ".paquetes" / _python_tag()
 
 
-def normalizar(nombre: str) -> str:
-    """Nombre canónico segun PEP 503 ('Pillow' y 'pillow' son el mismo paquete)."""
-    return re.sub(r"[-_.]+", "-", (nombre or "").strip()).lower()
+def normalize(name: str) -> str:
+    """Canonical name per PEP 503 ('Pillow' and 'pillow' are the same package)."""
+    return re.sub(r"[-_.]+", "-", (name or "").strip()).lower()
 
 
-def instalados(directorio) -> Dict[str, str]:
-    """{nombre_normalizado: version} leyendo los *.dist-info del directorio."""
-    encontrados: Dict[str, str] = {}
-    if not directorio:
-        return encontrados
-    d = Path(directorio)
+def installed(directory) -> Dict[str, str]:
+    """{normalized_name: version} reading the *.dist-info of the directory."""
+    found: Dict[str, str] = {}
+    if not directory:
+        return found
+    d = Path(directory)
     if not d.is_dir():
-        return encontrados
+        return found
     for info in d.glob("*.dist-info"):
-        tronco = info.name[: -len(".dist-info")]
-        if "-" not in tronco:
+        stem = info.name[: -len(".dist-info")]
+        if "-" not in stem:
             continue
-        nombre, _, version = tronco.rpartition("-")
-        encontrados[normalizar(nombre)] = version
-    return encontrados
+        name, _, version = stem.rpartition("-")
+        found[normalize(name)] = version
+    return found
 
 
-def _parsear(requisito: str):
-    """(nombre_normalizado, especificador) o (nombre, None) si no se puede parsear."""
+def _parse(requirement: str):
+    """(normalized_name, specifier) or (name, None) if it can't be parsed."""
     try:
         from packaging.requirements import Requirement
-        r = Requirement(requisito)
-        return normalizar(r.name), r.specifier
+        r = Requirement(requirement)
+        return normalize(r.name), r.specifier
     except Exception:
-        nombre = re.split(r"[<>=!~\[ ]", (requisito or "").strip(), 1)[0]
-        return normalizar(nombre), None
+        name = re.split(r"[<>=!~\[ ]", (requirement or "").strip(), 1)[0]
+        return normalize(name), None
 
 
-def _cumple(version: str, especificador) -> bool:
-    """¿La versión instalada satisface lo pedido? Sin especificador, sí."""
-    if especificador is None or not str(especificador):
+def _satisfies(version: str, specifier) -> bool:
+    """Does the installed version satisfy what was asked? Without a specifier, yes."""
+    if specifier is None or not str(specifier):
         return True
     try:
         from packaging.version import Version
-        return especificador.contains(Version(version), prereleases=True)
+        return specifier.contains(Version(version), prereleases=True)
     except Exception:
         return False
 
 
 def pythonpath(workspace=None) -> str:
-    """PYTHONPATH con lo local primero y lo compartido después."""
-    partes: List[str] = []
-    local = dir_local(workspace)
+    """PYTHONPATH with local first and shared after."""
+    parts: List[str] = []
+    local = local_dir(workspace)
     if local and local.is_dir():
-        partes.append(str(local))
-    partes.append(str(dir_compartido()))
-    heredado = os.environ.get("PYTHONPATH", "")
-    if heredado:
-        partes.append(heredado)
-    return os.pathsep.join(partes)
+        parts.append(str(local))
+    parts.append(str(shared_dir()))
+    inherited = os.environ.get("PYTHONPATH", "")
+    if inherited:
+        parts.append(inherited)
+    return os.pathsep.join(parts)
 
 
-def entorno(workspace=None) -> Dict[str, str]:
-    """Copia del entorno con el PYTHONPATH del almacén puesto."""
+def environment(workspace=None) -> Dict[str, str]:
+    """Copy of the environment with the store's PYTHONPATH set."""
     env = dict(os.environ)
     env["PYTHONPATH"] = pythonpath(workspace)
-    # Sin esto, un script que imprima '→' con el stdout capturado en un pipe
-    # usa la codificación local (cp1252 en Windows) y muere con
-    # UnicodeEncodeError antes de hacer nada. Inofensivo en macOS, y acá cubre
-    # de una sola vez a ejecutar_python y a ejecutar_shell.
+    # Without this, a script that prints '→' with stdout captured in a pipe uses
+    # the local encoding (cp1252 on Windows) and dies with UnicodeEncodeError
+    # before doing anything. Harmless on macOS, and here it covers both
+    # ejecutar_python and ejecutar_shell in one place.
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     return env
 
 
-def _pip_instalar(requisito: str, destino: Path) -> Tuple[bool, str]:
-    destino.mkdir(parents=True, exist_ok=True)
+def _pip_install(requirement: str, destination: Path) -> Tuple[bool, str]:
+    destination.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(
-            [interprete.interpreter(), "-m", "pip", "install", "--target", str(destino),
-             "--upgrade", requisito],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT_INSTALACION)
+            [interprete.interpreter(), "-m", "pip", "install", "--target", str(destination),
+             "--upgrade", requirement],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=INSTALL_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return False, f"La instalación superó los {TIMEOUT_INSTALACION}s"
+        return False, f"La instalación superó los {INSTALL_TIMEOUT}s"
     except Exception as e:
         return False, f"No pude ejecutar pip: {e}"
     if proc.returncode != 0:
@@ -136,103 +141,103 @@ def _pip_instalar(requisito: str, destino: Path) -> Tuple[bool, str]:
     return True, (proc.stdout or "").strip()[-300:]
 
 
-def _confirmar_instalacion(requisito: str, nombre: str, donde: str,
-                           permisos) -> Any:
-    """Le pregunta a la persona antes de traer código de terceros de PyPI.
+def _confirm_install(requirement: str, name: str, where: str,
+                     permisos) -> Any:
+    """Asks the person before pulling third-party code from PyPI.
 
-    Solo se llega aca cuando hay que instalar DE VERDAD: si el paquete ya esta
-    en el almacen compartido o en el local, instalar() corta antes y no
-    pregunta nada. Por eso la confirmacion aparece poco y cuando aparece
-    importa.
+    We only get here when there's really something to install: if the package is
+    already in the shared store or the local one, install() returns earlier and
+    asks nothing. That's why the confirmation shows up rarely and, when it does,
+    it matters.
 
-    La clave es una sola para toda la conversacion ('pip'), asi que "permitir
-    siempre" habilita las instalaciones que vengan despues en esa misma
-    conversacion. Es lo pedido: cuando el agente esta armando un entorno suele
-    necesitar varios paquetes seguidos y preguntar uno por uno es ruido.
+    The key is a single one for the whole conversation ('pip'), so "always allow"
+    enables the installs that come afterwards in that same conversation. It's
+    what's wanted: when the agent is setting up an environment it usually needs
+    several packages in a row and asking one by one is noise.
     """
     from core import ejecucion
-    detalle = (f"Paquete: {requisito}\n"
-               f"Destino: instalación {donde}\n\n"
-               f"Se va a ejecutar pip install, que descarga y ejecuta código de "
-               f"PyPI. Revisá que el nombre sea el que esperabas: un nombre "
-               f"parecido al de un paquete conocido puede ser otro paquete.")
+    detail = (f"Paquete: {requirement}\n"
+              f"Destino: instalación {where}\n\n"
+              f"Se va a ejecutar pip install, que descarga y ejecuta código de "
+              f"PyPI. Revisá que el nombre sea el que esperabas: un nombre "
+              f"parecido al de un paquete conocido puede ser otro paquete.")
     return ejecucion.pedir_permiso_simple(
-        "pip", f"instalar el paquete '{nombre}' desde PyPI", detalle, permisos)
+        "pip", f"instalar el paquete '{name}' desde PyPI", detail, permisos)
 
 
-def instalar(requisito: str, workspace=None,
+def install(requirement: str, workspace=None,
              permisos=None) -> Dict[str, Any]:
-    """Instala un paquete reutilizando el almacén compartido siempre que se pueda.
+    """Installs a package reusing the shared store whenever possible.
 
-    - Si ya está (compartido o local) y la versión sirve: no descarga nada.
-    - Si NO está: va al compartido, para que la próxima conversación lo reuse.
-    - Si está pero la versión pedida choca con la compartida: se instala SOLO
-      para esta conversación, sin tocar lo que usan las demás.
+    - If it's already there (shared or local) and the version works: downloads nothing.
+    - If it's NOT there: goes to the shared store, so the next conversation reuses it.
+    - If it's there but the requested version clashes with the shared one: it's
+      installed ONLY for this conversation, without touching what the others use.
     """
-    requisito = (requisito or "").strip()
-    if not requisito:
+    requirement = (requirement or "").strip()
+    if not requirement:
         return {"error": "Falta el nombre del paquete (ej: 'numpy' o 'numpy==1.26.4')"}
 
-    nombre, especificador = _parsear(requisito)
-    compartido, local = dir_compartido(), dir_local(workspace)
+    name, specifier = _parse(requirement)
+    shared, local = shared_dir(), local_dir(workspace)
 
-    en_local = instalados(local)
-    if nombre in en_local and _cumple(en_local[nombre], especificador):
-        return {"estado": "ya_estaba", "donde": "local", "paquete": nombre,
-                "version": en_local[nombre], "ahorro": "no se descargó nada"}
+    in_local = installed(local)
+    if name in in_local and _satisfies(in_local[name], specifier):
+        return {"estado": "ya_estaba", "donde": "local", "paquete": name,
+                "version": in_local[name], "ahorro": "no se descargó nada"}
 
-    en_compartido = instalados(compartido)
-    if nombre in en_compartido:
-        if _cumple(en_compartido[nombre], especificador):
-            return {"estado": "ya_estaba", "donde": "compartida", "paquete": nombre,
-                    "version": en_compartido[nombre], "ahorro": "no se descargó nada"}
-        # Conflicto real: la compartida no sirve para esta conversación.
+    in_shared = installed(shared)
+    if name in in_shared:
+        if _satisfies(in_shared[name], specifier):
+            return {"estado": "ya_estaba", "donde": "compartida", "paquete": name,
+                    "version": in_shared[name], "ahorro": "no se descargó nada"}
+        # Real conflict: the shared one is no good for this conversation.
         if local is None:
-            return {"error": f"'{nombre}' compartido está en {en_compartido[nombre]}, "
-                             f"que no cumple '{requisito}', y no hay workspace para "
+            return {"error": f"'{name}' compartido está en {in_shared[name]}, "
+                             f"que no cumple '{requirement}', y no hay workspace para "
                              f"instalarlo aparte."}
-        bloqueo = _confirmar_instalacion(requisito, nombre, "local", permisos)
-        if bloqueo:
-            return bloqueo
-        ok, detalle = _pip_instalar(requisito, local)
+        block = _confirm_install(requirement, name, "local", permisos)
+        if block:
+            return block
+        ok, detail = _pip_install(requirement, local)
         if not ok:
-            return {"error": f"No pude instalar '{requisito}' en local: {detalle}"}
-        return {"estado": "instalado", "donde": "local", "paquete": nombre,
-                "version": instalados(local).get(nombre, "?"),
+            return {"error": f"No pude instalar '{requirement}' en local: {detail}"}
+        return {"estado": "instalado", "donde": "local", "paquete": name,
+                "version": installed(local).get(name, "?"),
                 "motivo": (f"conflicto de versión: la compartida es "
-                           f"{en_compartido[nombre]} y pediste '{requisito}'. Se "
+                           f"{in_shared[name]} y pediste '{requirement}'. Se "
                            f"instaló solo para esta conversación.")}
 
-    bloqueo = _confirmar_instalacion(requisito, nombre, "compartida", permisos)
-    if bloqueo:
-        return bloqueo
-    ok, detalle = _pip_instalar(requisito, compartido)
+    block = _confirm_install(requirement, name, "compartida", permisos)
+    if block:
+        return block
+    ok, detail = _pip_install(requirement, shared)
     if not ok:
-        return {"error": f"No pude instalar '{requisito}': {detalle}"}
-    return {"estado": "instalado", "donde": "compartida", "paquete": nombre,
-            "version": instalados(compartido).get(nombre, "?"),
+        return {"error": f"No pude instalar '{requirement}': {detail}"}
+    return {"estado": "instalado", "donde": "compartida", "paquete": name,
+            "version": installed(shared).get(name, "?"),
             "nota": "queda disponible para todas las conversaciones"}
 
 
-def listar(workspace=None) -> Dict[str, Any]:
-    compartido = instalados(dir_compartido())
-    local = instalados(dir_local(workspace))
+def list_installed(workspace=None) -> Dict[str, Any]:
+    shared = installed(shared_dir())
+    local = installed(local_dir(workspace))
     return {
-        "compartidas": dict(sorted(compartido.items())),
+        "compartidas": dict(sorted(shared.items())),
         "locales_de_esta_conversacion": dict(sorted(local.items())),
-        "ruta_compartida": str(dir_compartido()),
+        "ruta_compartida": str(shared_dir()),
     }
 
 
-# --- Tool para el chat ------------------------------------------------------
+# --- Chat tool --------------------------------------------------------------
 
 def ejecutar_tool_paquetes(nombre: str, argumentos: dict, workspace=None,
                            permisos=None) -> Dict[str, Any]:
     a = argumentos or {}
     if nombre == "instalar_paquete":
-        return instalar(a.get("paquete", ""), workspace=workspace, permisos=permisos)
+        return install(a.get("paquete", ""), workspace=workspace, permisos=permisos)
     if nombre == "listar_paquetes":
-        return listar(workspace=workspace)
+        return list_installed(workspace=workspace)
     return {"error": f"Herramienta de paquetes desconocida: {nombre}"}
 
 

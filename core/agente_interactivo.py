@@ -7,7 +7,7 @@ from core.planificador import Planificador
 from core.generador import Generador
 from core.ejecutor import Ejecutor
 from core.evaluador import Evaluador
-from core.memoria import Memoria
+from core.memoria import Memory
 from core.herramientas import Herramientas
 from core.biblioteca import Biblioteca
 
@@ -51,19 +51,19 @@ class AgenteInteractivo:
         self.generador = Generador(herramientas=self.herramientas, biblioteca=self.biblioteca)
         self.ejecutor = Ejecutor()
         self.evaluador = Evaluador()
-        self.memoria = Memoria()
+        self.memoria = Memory()
 
         # Retomar historial previo si existe (sesión anterior)
         if self.memoria_path.exists():
             try:
                 historial_previo = json.loads(self.memoria_path.read_text(encoding='utf-8'))
                 for h in historial_previo:
-                    self.memoria.guardar_iteracion(h)
+                    self.memoria.save_iteration(h)
             except Exception:
                 pass
 
         self.objetivos_alcanzados = bool(self.config.get('exito', False))
-        self.iteracion = len(self.memoria.obtener_historial())
+        self.iteracion = len(self.memoria.get_history())
         self.max_iteraciones = self.config.get('max_iteraciones', 15)
         self.feedback_usuario = ""
         self.interaccion_activa = True
@@ -97,7 +97,7 @@ class AgenteInteractivo:
 
             plan = self.planificador.crear_plan(
                 self.config['objetivos'],
-                self.memoria.obtener_historial()
+                self.memoria.get_history()
             )
 
             if self.feedback_usuario:
@@ -108,7 +108,7 @@ class AgenteInteractivo:
 
             codigo = self.generador.generar(
                 plan=plan,
-                historial=self.memoria.obtener_historial(),
+                historial=self.memoria.get_history(),
                 descripcion=self.config['descripcion'],
                 feedback=self.feedback_usuario
             )
@@ -137,7 +137,7 @@ class AgenteInteractivo:
             print(f"   Eficiencia: {metricas.get('puntaje_eficiencia', 0):.2%}")
             print(f"   Calidad: {metricas.get('puntaje_calidad', 0):.2%}")
 
-            self.memoria.guardar_iteracion({
+            self.memoria.save_iteration({
                 'iteracion': self.iteracion,
                 'codigo': codigo,
                 'resultado': resultado,
@@ -165,8 +165,8 @@ class AgenteInteractivo:
             if self.iteracion % self.cada_n_iteraciones == 0 and self.interaccion_activa:
                 self._interaccion_humana()
 
-        if not self.objetivos_alcanzados and self.memoria.obtener_historial():
-            ultimo_codigo = self.memoria.obtener_ultimo_codigo()
+        if not self.objetivos_alcanzados and self.memoria.get_history():
+            ultimo_codigo = self.memoria.last_code()
             (self.proyecto_dir / "ultima_version.py").write_text(ultimo_codigo, encoding='utf-8')
             print(f"\n💾 Última versión guardada en: {self.proyecto_dir / 'ultima_version.py'}")
             print("   (podés retomar este proyecto más tarde para seguir iterando)")
@@ -174,7 +174,7 @@ class AgenteInteractivo:
         return self._resultado_final()
 
     def _persistir_memoria(self):
-        historial = self.memoria.obtener_historial()
+        historial = self.memoria.get_history()
         self.memoria_path.write_text(
             json.dumps(historial, indent=2, ensure_ascii=False, default=str),
             encoding='utf-8'
@@ -191,9 +191,9 @@ class AgenteInteractivo:
         return {
             'exito': self.objetivos_alcanzados,
             'iteraciones': self.iteracion,
-            'codigo_final': self.memoria.obtener_ultimo_codigo() if self.objetivos_alcanzados else None,
-            'historial': self.memoria.obtener_historial(),
-            'mejor_puntaje': self.memoria.obtener_mejor_puntaje(),
+            'codigo_final': self.memoria.last_code() if self.objetivos_alcanzados else None,
+            'historial': self.memoria.get_history(),
+            'mejor_puntaje': self.memoria.best_score(),
             'proyecto_dir': str(self.proyecto_dir)
         }
 
@@ -202,7 +202,7 @@ class AgenteInteractivo:
         print("💬 INTERACCIÓN CON EL USUARIO")
         print("="*50)
 
-        historial = self.memoria.obtener_historial()
+        historial = self.memoria.get_history()
         print(f"\n📊 Progreso después de {len(historial)} iteraciones:")
 
         for i, h in enumerate(historial[-6:], max(1, len(historial)-5)):
@@ -210,7 +210,7 @@ class AgenteInteractivo:
             diagnostico = h.get('diagnostico', '')
             print(f"   {i}. Puntaje: {puntaje:.1f}% - {diagnostico[:50]}")
 
-        mejor_puntaje = self.memoria.obtener_mejor_puntaje() * 100
+        mejor_puntaje = self.memoria.best_score() * 100
         print(f"\n🏆 Mejor puntaje hasta ahora: {mejor_puntaje:.1f}%")
 
         ultimo = historial[-1] if historial else None

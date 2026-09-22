@@ -5,7 +5,7 @@ from core.planificador import Planificador
 from core.generador import Generador
 from core.ejecutor import Ejecutor
 from core.evaluador import Evaluador
-from core.memoria import Memoria
+from core.memoria import Memory
 
 
 class AgenteCodigo:
@@ -24,7 +24,7 @@ class AgenteCodigo:
         self.generador = Generador()
         self.ejecutor = Ejecutor()
         self.evaluador = Evaluador()
-        self.memoria = Memoria()
+        self.memoria = Memory()
         self.objetivos_alcanzados = False
         self.iteracion = 0
 
@@ -41,13 +41,13 @@ class AgenteCodigo:
 
             plan = self.planificador.crear_plan(
                 self.config['objetivos'],
-                self.memoria.obtener_historial()
+                self.memoria.get_history()
             )
             print(f"📋 Plan: {plan['estrategia']}")
 
             codigo = self.generador.generar(
                 plan=plan,
-                historial=self.memoria.obtener_historial(),
+                historial=self.memoria.get_history(),
                 descripcion=self.config['descripcion']
             )
             print(f"💻 Código generado ({len(codigo)} caracteres)")
@@ -71,7 +71,7 @@ class AgenteCodigo:
             print(f"   Eficiencia: {metricas.get('puntaje_eficiencia', 0):.2%}")
             print(f"   Calidad: {metricas.get('puntaje_calidad', 0):.2%}")
 
-            self.memoria.guardar_iteracion({
+            self.memoria.save_iteration({
                 'iteracion': self.iteracion,
                 'codigo': codigo,
                 'resultado': resultado,
@@ -92,9 +92,9 @@ class AgenteCodigo:
         return {
             'exito': self.objetivos_alcanzados,
             'iteraciones': self.iteracion,
-            'codigo_final': self.memoria.obtener_ultimo_codigo() if self.objetivos_alcanzados else None,
-            'historial': self.memoria.obtener_historial(),
-            'mejor_puntaje': self.memoria.obtener_mejor_puntaje()
+            'codigo_final': self.memoria.last_code() if self.objetivos_alcanzados else None,
+            'historial': self.memoria.get_history(),
+            'mejor_puntaje': self.memoria.best_score()
         }
 
     def limpiar(self):

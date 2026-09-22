@@ -1,26 +1,32 @@
 from typing import List, Dict, Any
 
 
-class Memoria:
+class Memory:
+    """In-memory history of the iterative loop's attempts.
+
+    (The stored per-iteration dict keys —'codigo', 'metricas'/'puntaje_global',
+    'diagnostico'— stay Spanish on purpose: they flow into the project history on
+    disk, so renaming them belongs to the data-migration phase.)"""
+
     def __init__(self):
-        self.historial = []
+        self.history = []
 
-    def guardar_iteracion(self, datos: Dict):
-        self.historial.append(datos)
+    def save_iteration(self, data: Dict):
+        self.history.append(data)
 
-    def obtener_historial(self) -> List:
-        return self.historial
+    def get_history(self) -> List:
+        return self.history
 
-    def obtener_ultimo_codigo(self) -> str:
-        if self.historial:
-            return self.historial[-1].get('codigo', '')
+    def last_code(self) -> str:
+        if self.history:
+            return self.history[-1].get('codigo', '')
         return ''
 
-    def obtener_mejor_puntaje(self) -> float:
-        if not self.historial:
+    def best_score(self) -> float:
+        if not self.history:
             return 0.0
-        mejores = [h.get('metricas', {}).get('puntaje_global', 0) for h in self.historial]
-        return max(mejores) if mejores else 0.0
+        best = [h.get('metricas', {}).get('puntaje_global', 0) for h in self.history]
+        return max(best) if best else 0.0
 
-    def obtener_diagnosticos(self) -> List:
-        return [h.get('diagnostico', '') for h in self.historial if h.get('diagnostico')]
+    def diagnostics(self) -> List:
+        return [h.get('diagnostico', '') for h in self.history if h.get('diagnostico')]

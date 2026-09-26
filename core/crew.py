@@ -89,6 +89,17 @@ class Agent:
             return self._responder(prompt)
         return self._real_chat().enviar(prompt)
 
+    @property
+    def conversation_dir(self):
+        """The agent's conversation folder once its real chat exists, else None.
+        Useful for the collaboration view and for demo cleanup."""
+        return getattr(self._chat, "conversacion_dir", None) if self._chat else None
+
+    @property
+    def last_usage(self):
+        """Token/cost usage of the agent's last turn (best-effort), or None."""
+        return getattr(self._chat, "uso_turno", None) if self._chat else None
+
     def _real_chat(self):
         """Build (once) a real ConversacionChat for this agent. Imported lazily so
         the module stays cheap to import and testable without the chat stack."""

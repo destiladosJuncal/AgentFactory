@@ -65,6 +65,7 @@ class CrewRun:
     final_output: str
     handoffs: List[Handoff]
     agents: List[str]
+    stopped: bool = False          # True if a stop was requested mid-run
 
 
 class Agent:
@@ -90,6 +91,17 @@ class Agent:
         if self._responder is not None:
             return self._responder(prompt)
         return self._real_chat().enviar(prompt)
+
+    def cancel(self):
+        """Best-effort stop: ask the agent's underlying chat to abort its tool
+        loop. A single LLM call already in flight can't be interrupted cleanly,
+        but this cuts any further tool iterations as soon as it checks."""
+        chat = self._chat
+        if chat is not None and hasattr(chat, "cancelado"):
+            try:
+                chat.cancelado = True
+            except Exception:
+                pass
 
     @property
     def conversation_dir(self):
@@ -140,20 +152,33 @@ class Crew:
         self.name = name
 
     def run(self, task: str,
-            progress: Optional[Callable[[str, object], None]] = None) -> CrewRun:
+            progress: Optional[Callable[[str, object], None]] = None,
+            should_stop: Optional[Callable[[], bool]] = None) -> CrewRun:
         """Run the crew. If ``progress`` is given, it's called as the run unfolds
         — ``progress("handoff", Handoff)`` when a message passes between agents,
         and ``progress("result", (agent_name, output))`` when an agent finishes —
-        so a UI can show the conversation live instead of only at the end."""
+        so a UI can show the conversation live instead of only at the end.
+
+        If ``should_stop`` is given, it's checked before each agent; when it
+        returns True the run stops there (the agent already in flight finishes,
+        but no further agent starts) and the result is flagged ``stopped``."""
         def emit(kind, data):
             if progress is not None:
                 progress(kind, data)
 
+        def stop_requested() -> bool:
+            return bool(should_stop and should_stop())
+
         handoffs: List[Handoff] = []
         prev: Optional[Agent] = None
         prev_output = ""
+        stopped = False
 
         for agent in self.agents:
+            if stop_requested():
+                stopped = True
+                break
+
             if prev is None:
                 body = task
                 h = Handoff(None, agent.name, task)
@@ -169,8 +194,8 @@ class Crew:
             emit("result", (agent.name, prev_output))
             prev = agent
 
-        return CrewRun(task=task, final_output=prev_output,
-                       handoffs=handoffs, agents=[a.name for a in self.agents])
+        return CrewRun(task=task, final_output=prev_output, handoffs=handoffs,
+                       agents=[a.name for a in self.agents], stopped=stopped)
 
 
 def run_pair(task: str, first: Agent, second: Agent) -> CrewRun:

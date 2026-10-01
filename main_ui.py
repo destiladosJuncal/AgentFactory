@@ -3539,6 +3539,10 @@ class AgenteUI(BASE_TK):
         self.crew_boton = ttk.Button(botones, text="▶ Planificar y correr",
                                      command=self.correr_crew)
         self.crew_boton.pack(side="left")
+        self.crew_boton_detener = ttk.Button(botones, text="⏹ Detener agentes",
+                                             command=self.detener_crew,
+                                             state="disabled")
+        self.crew_boton_detener.pack(side="left", padx=(8, 0))
         ttk.Button(botones, text="🧹 Limpiar",
                    command=self._crew_limpiar).pack(side="left", padx=(8, 0))
         self.crew_estado = ttk.Label(botones, text="", foreground=COLOR_TENUE)
@@ -3558,6 +3562,8 @@ class AgenteUI(BASE_TK):
             self.crew_salida.tag_configure(tag, **cfg)
         self.crew_salida.configure(state="disabled")
         self.ocupado_crew = False
+        self._crew_cancelado = False
+        self._crew_actual = None
 
     def _crew_escribir(self, texto, tag):
         self.crew_salida.configure(state="normal")
@@ -3578,7 +3584,10 @@ class AgenteUI(BASE_TK):
             messagebox.showinfo("Agentes", "Escribí una tarea primero.", parent=self)
             return
         self.ocupado_crew = True
+        self._crew_cancelado = False
+        self._crew_actual = None
         self.crew_boton.configure(state="disabled")
+        self.crew_boton_detener.configure(state="normal")
         self.crew_estado.configure(text="corriendo…")
         self._crew_limpiar()
         self._crew_escribir(f"TAREA: {tarea}\n" + "=" * 54 + "\n", "crew_sys")
@@ -3586,6 +3595,23 @@ class AgenteUI(BASE_TK):
             target=self._worker_crew,
             args=(tarea, int(self.crew_max.get()), bool(self.crew_tools.get())),
             daemon=True).start()
+
+    def detener_crew(self):
+        """Pide frenar a todos los agentes. Es cooperativo: el agente que esté en
+        una llamada en curso la termina, pero no arranca ninguno más; y se le pide
+        al chat en curso que corte su loop de herramientas."""
+        self._crew_cancelado = True
+        self.crew_boton_detener.configure(state="disabled")
+        self.crew_estado.configure(text="deteniendo…")
+        self._crew_escribir("\n⏹ Deteniendo a los agentes (termina el paso en curso)…\n",
+                            "crew_sys")
+        crew = self._crew_actual
+        if crew is not None:
+            for agente in crew.agents:
+                try:
+                    agente.cancel()
+                except Exception:
+                    pass
 
     def _worker_crew(self, tarea, maxi, con_tools):
         """Corre en un hilo: planifica el equipo y lo ejecuta, empujando cada
@@ -3595,19 +3621,29 @@ class AgenteUI(BASE_TK):
         try:
             from core import crew as crewmod
             self.cola.put(("crew_status", "🧠 Planificando equipo…"))
+            if self._crew_cancelado:
+                self.cola.put(("crew_done", crewmod.CrewRun(tarea, "", [], [], stopped=True)))
+                return
             specs = crewmod.plan_team(tarea, max_agents=maxi)
+            if self._crew_cancelado:
+                self.cola.put(("crew_done", crewmod.CrewRun(tarea, "", [], [], stopped=True)))
+                return
             self.cola.put(("crew_team", specs))
             equipo = crewmod.build_crew(specs, tools_enabled=con_tools)
+            self._crew_actual = equipo
             run = equipo.run(
                 tarea,
-                progress=lambda kind, data: self.cola.put((f"crew_{kind}", data)))
+                progress=lambda kind, data: self.cola.put((f"crew_{kind}", data)),
+                should_stop=lambda: self._crew_cancelado)
             self.cola.put(("crew_done", run))
         except Exception:
             self.cola.put(("crew_error", traceback.format_exc()))
 
     def _fin_crew(self):
         self.ocupado_crew = False
+        self._crew_actual = None
         self.crew_boton.configure(state="normal")
+        self.crew_boton_detener.configure(state="disabled")
         self.crew_estado.configure(text="")
 
     def _procesar_cola(self):
@@ -3752,8 +3788,19 @@ class AgenteUI(BASE_TK):
 
                 elif tipo == "crew_done":
                     run = dato
-                    self._crew_escribir("\n" + "=" * 54 + "\n✅ RESULTADO FINAL\n", "crew_sys")
-                    self._crew_escribir(f"{run.final_output}\n", "crew_cuerpo")
+                    if getattr(run, "stopped", False):
+                        self._crew_escribir(
+                            "\n" + "=" * 54 + "\n⏹ DETENIDO por el usuario. "
+                            "Los agentes que ya habían corrido quedaron registrados.\n",
+                            "crew_err")
+                        if run.final_output:
+                            self._crew_escribir(
+                                f"\nÚltimo resultado parcial:\n{run.final_output}\n",
+                                "crew_cuerpo")
+                    else:
+                        self._crew_escribir(
+                            "\n" + "=" * 54 + "\n✅ RESULTADO FINAL\n", "crew_sys")
+                        self._crew_escribir(f"{run.final_output}\n", "crew_cuerpo")
                     self._fin_crew()
 
                 elif tipo == "crew_error":

@@ -185,3 +185,33 @@ def test_run_progress_callback_order():
     assert events[1][1] == ("A", "A-OUT")        # A's result
     assert events[2][1].from_agent == "A"        # A -> B handoff
     assert events[3][1] == ("B", "B-OUT")        # B's result
+
+
+def test_should_stop_halts_before_next_agent():
+    ran = []
+    flag = {"v": False}
+
+    def mk(name):
+        def r(_p):
+            ran.append(name)
+            flag["v"] = True          # after the first agent runs, ask to stop
+            return name
+        return r
+
+    crew = Crew([Agent("A", "r", responder=mk("A")),
+                 Agent("B", "w", responder=mk("B")),
+                 Agent("C", "x", responder=mk("C"))])
+    run = crew.run("t", should_stop=lambda: flag["v"])
+
+    assert ran == ["A"]               # B and C never started
+    assert run.stopped is True
+    assert run.final_output == "A"
+
+
+def test_should_stop_before_any_agent():
+    ran = []
+    crew = Crew([Agent("A", "r", responder=lambda p: ran.append("A"))])
+    run = crew.run("t", should_stop=lambda: True)
+    assert ran == []
+    assert run.stopped is True
+    assert run.final_output == ""

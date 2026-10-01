@@ -170,3 +170,18 @@ def test_build_crew_from_specs_runs():
     run = crew.run("task")
     assert run.final_output == "two"
     assert run.agents == ["A", "B"]
+
+
+def test_run_progress_callback_order():
+    a = Agent("A", "researcher", responder=lambda p: "A-OUT")
+    b = Agent("B", "writer", responder=lambda p: "B-OUT")
+    events = []
+    Crew([a, b]).run("task", progress=lambda kind, data: events.append((kind, data)))
+
+    kinds = [k for k, _ in events]
+    # handoff(A) result(A) handoff(B) result(B)
+    assert kinds == ["handoff", "result", "handoff", "result"]
+    assert events[0][1].to_agent == "A"          # first handoff is the task -> A
+    assert events[1][1] == ("A", "A-OUT")        # A's result
+    assert events[2][1].from_agent == "A"        # A -> B handoff
+    assert events[3][1] == ("B", "B-OUT")        # B's result

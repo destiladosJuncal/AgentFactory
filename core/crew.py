@@ -139,7 +139,16 @@ class Crew:
         self.agents = agents
         self.name = name
 
-    def run(self, task: str) -> CrewRun:
+    def run(self, task: str,
+            progress: Optional[Callable[[str, object], None]] = None) -> CrewRun:
+        """Run the crew. If ``progress`` is given, it's called as the run unfolds
+        — ``progress("handoff", Handoff)`` when a message passes between agents,
+        and ``progress("result", (agent_name, output))`` when an agent finishes —
+        so a UI can show the conversation live instead of only at the end."""
+        def emit(kind, data):
+            if progress is not None:
+                progress(kind, data)
+
         handoffs: List[Handoff] = []
         prev: Optional[Agent] = None
         prev_output = ""
@@ -147,14 +156,17 @@ class Crew:
         for agent in self.agents:
             if prev is None:
                 body = task
-                handoffs.append(Handoff(None, agent.name, task))
+                h = Handoff(None, agent.name, task)
             else:
                 body = _HANDOFF_TEMPLATE.format(
                     task=task, prev_name=prev.name, prev_role=prev.role,
                     prev_output=prev_output)
-                handoffs.append(Handoff(prev.name, agent.name, prev_output))
+                h = Handoff(prev.name, agent.name, prev_output)
+            handoffs.append(h)
+            emit("handoff", h)
 
             prev_output = agent.run(body)
+            emit("result", (agent.name, prev_output))
             prev = agent
 
         return CrewRun(task=task, final_output=prev_output,

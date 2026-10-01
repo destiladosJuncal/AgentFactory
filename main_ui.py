@@ -788,6 +788,7 @@ class AgenteUI(BASE_TK):
 
         self.tab_chat = ttk.Frame(self.pestanas)
         self.tab_tareas = ttk.Frame(self.pestanas)
+        self.tab_agentes = ttk.Frame(self.pestanas)
         self.tab_proyectos = ttk.Frame(self.pestanas)
         self.tab_biblioteca = ttk.Frame(self.pestanas)
         self.tab_procesador = ttk.Frame(self.pestanas)
@@ -796,12 +797,14 @@ class AgenteUI(BASE_TK):
 
         self.pestanas.add(self.tab_chat, text="  💬 Conversaciones  ")
         self.pestanas.add(self.tab_tareas, text="  🕒 Tareas  ")
+        self.pestanas.add(self.tab_agentes, text="  🤝 Agentes  ")
         self.pestanas.add(self.tab_config, text="  ⚙️ Configuración  ")
         # Proyectos iterativos, Biblioteca, Procesador y Proxy: se construyen
         # (para no romper referencias internas) pero NO se muestran como pestañas.
 
         self._construir_tab_chat()
         self._construir_tab_tareas()
+        self._construir_tab_agentes()
         self._construir_tab_proyectos()
         self._construir_tab_biblioteca()
         self._construir_tab_procesador()
@@ -3502,6 +3505,111 @@ class AgenteUI(BASE_TK):
         destino = self.conversacion.workspace_dir if self.conversacion else AGENT_CODE_DIR
         plataforma.abrir_carpeta(destino)
 
+    # -- pestaña agentes (multi-agente / crew) -----------------------------
+
+    def _construir_tab_agentes(self):
+        cont = ttk.Frame(self.tab_agentes)
+        cont.pack(fill="both", expand=True, padx=10, pady=8)
+
+        ttk.Label(cont, text="Equipo de agentes",
+                  font=(FUENTE_UI, 13, "bold")).pack(anchor="w")
+        ttk.Label(cont, text=(
+            "Escribí una tarea. Un planner infiere cuántos agentes hacen falta y "
+            "qué rol tiene cada uno; después colaboran en secuencia y vas viendo "
+            "la conversación entre ellos en vivo."),
+            foreground=COLOR_TENUE, wraplength=820, justify="left").pack(
+                anchor="w", pady=(2, 8))
+
+        self.crew_tarea = tk.Text(cont, height=3, wrap="word", font=(FUENTE_UI, 12),
+                                  relief="solid", borderwidth=1, padx=8, pady=6)
+        self.crew_tarea.pack(fill="x")
+
+        fila = ttk.Frame(cont)
+        fila.pack(fill="x", pady=(8, 6))
+        ttk.Label(fila, text="Máx. agentes:").pack(side="left")
+        self.crew_max = tk.IntVar(value=4)
+        ttk.Spinbox(fila, from_=1, to=6, width=4,
+                    textvariable=self.crew_max).pack(side="left", padx=(6, 16))
+        self.crew_tools = tk.BooleanVar(value=False)
+        ttk.Checkbutton(fila, text="Con herramientas (shell/biblioteca/web)",
+                        variable=self.crew_tools).pack(side="left")
+
+        botones = ttk.Frame(cont)
+        botones.pack(fill="x", pady=(0, 8))
+        self.crew_boton = ttk.Button(botones, text="▶ Planificar y correr",
+                                     command=self.correr_crew)
+        self.crew_boton.pack(side="left")
+        ttk.Button(botones, text="🧹 Limpiar",
+                   command=self._crew_limpiar).pack(side="left", padx=(8, 0))
+        self.crew_estado = ttk.Label(botones, text="", foreground=COLOR_TENUE)
+        self.crew_estado.pack(side="left", padx=12)
+
+        cont_tx, self.crew_salida = self._texto_scroll(
+            cont, font=(FUENTE_MONO, 11), height=20)
+        cont_tx.pack(fill="both", expand=True)
+        for tag, cfg in {
+            "crew_sys":    {"foreground": COLOR_AGENTE, "font": (FUENTE_UI, 11, "bold")},
+            "crew_rol":    {"foreground": COLOR_USUARIO, "font": (FUENTE_UI, 11, "bold")},
+            "crew_flecha": {"foreground": COLOR_USUARIO},
+            "crew_cuerpo": {"foreground": COLOR_TEXTO},
+            "crew_tenue":  {"foreground": COLOR_TENUE},
+            "crew_err":    {"foreground": COLOR_ERROR},
+        }.items():
+            self.crew_salida.tag_configure(tag, **cfg)
+        self.crew_salida.configure(state="disabled")
+        self.ocupado_crew = False
+
+    def _crew_escribir(self, texto, tag):
+        self.crew_salida.configure(state="normal")
+        self.crew_salida.insert("end", texto, tag)
+        self.crew_salida.configure(state="disabled")
+        self.crew_salida.see("end")
+
+    def _crew_limpiar(self):
+        self.crew_salida.configure(state="normal")
+        self.crew_salida.delete("1.0", "end")
+        self.crew_salida.configure(state="disabled")
+
+    def correr_crew(self):
+        if getattr(self, "ocupado_crew", False):
+            return
+        tarea = self.crew_tarea.get("1.0", "end").strip()
+        if not tarea:
+            messagebox.showinfo("Agentes", "Escribí una tarea primero.", parent=self)
+            return
+        self.ocupado_crew = True
+        self.crew_boton.configure(state="disabled")
+        self.crew_estado.configure(text="corriendo…")
+        self._crew_limpiar()
+        self._crew_escribir(f"TAREA: {tarea}\n" + "=" * 54 + "\n", "crew_sys")
+        threading.Thread(
+            target=self._worker_crew,
+            args=(tarea, int(self.crew_max.get()), bool(self.crew_tools.get())),
+            daemon=True).start()
+
+    def _worker_crew(self, tarea, maxi, con_tools):
+        """Corre en un hilo: planifica el equipo y lo ejecuta, empujando cada
+        paso a la cola para que la conversación se vea en vivo. Las conversaciones
+        de los agentes NO se borran: quedan en la pestaña Conversaciones para que
+        puedas abrir la de cada uno y ver su diálogo completo."""
+        try:
+            from core import crew as crewmod
+            self.cola.put(("crew_status", "🧠 Planificando equipo…"))
+            specs = crewmod.plan_team(tarea, max_agents=maxi)
+            self.cola.put(("crew_team", specs))
+            equipo = crewmod.build_crew(specs, tools_enabled=con_tools)
+            run = equipo.run(
+                tarea,
+                progress=lambda kind, data: self.cola.put((f"crew_{kind}", data)))
+            self.cola.put(("crew_done", run))
+        except Exception:
+            self.cola.put(("crew_error", traceback.format_exc()))
+
+    def _fin_crew(self):
+        self.ocupado_crew = False
+        self.crew_boton.configure(state="normal")
+        self.crew_estado.configure(text="")
+
     def _procesar_cola(self):
         try:
             while True:
@@ -3619,6 +3727,38 @@ class AgenteUI(BASE_TK):
                 elif tipo == "proyecto_error":
                     self._log(f"\n❌ Error inesperado:\n{dato}")
                     self._fin_proyecto()
+
+                elif tipo == "crew_status":
+                    self._crew_escribir(f"\n{dato}\n", "crew_sys")
+
+                elif tipo == "crew_team":
+                    specs = dato
+                    self._crew_escribir(
+                        f"\n🧩 El planner propuso {len(specs)} agente(s):\n", "crew_sys")
+                    for i, s in enumerate(specs, 1):
+                        self._crew_escribir(f"  {i}. {s.name} — {s.role}\n", "crew_rol")
+                        if s.goal:
+                            self._crew_escribir(f"     ↳ {s.goal}\n", "crew_tenue")
+
+                elif tipo == "crew_handoff":
+                    h = dato
+                    origen = h.from_agent or "· tarea inicial ·"
+                    self._crew_escribir(f"\n{origen}  →  {h.to_agent}\n", "crew_flecha")
+
+                elif tipo == "crew_result":
+                    nombre, salida = dato
+                    self._crew_escribir(f"🗣️ {nombre}:\n", "crew_rol")
+                    self._crew_escribir(f"{salida}\n", "crew_cuerpo")
+
+                elif tipo == "crew_done":
+                    run = dato
+                    self._crew_escribir("\n" + "=" * 54 + "\n✅ RESULTADO FINAL\n", "crew_sys")
+                    self._crew_escribir(f"{run.final_output}\n", "crew_cuerpo")
+                    self._fin_crew()
+
+                elif tipo == "crew_error":
+                    self._crew_escribir(f"\n❌ {dato}\n", "crew_err")
+                    self._fin_crew()
 
         except queue.Empty:
             pass

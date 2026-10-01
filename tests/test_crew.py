@@ -6,7 +6,8 @@ they exercise the orchestration and the hand-off log, not the model.
 
 import pytest
 
-from core.crew import Agent, Crew, Handoff, CrewRun, run_pair
+from core.crew import (Agent, Crew, Handoff, CrewRun, run_pair,
+                       AgentSpec, plan_team, build_crew, _parse_team)
 
 
 def test_agent_frames_role_and_goal():
@@ -94,4 +95,78 @@ def test_run_pair_helper():
     b = Agent("B", "reviewer", responder=lambda p: "final")
     run = run_pair("build it", a, b)
     assert run.final_output == "final"
+    assert run.agents == ["A", "B"]
+
+
+# --- Dynamic team planning -------------------------------------------------
+
+VALID_JSON = (
+    '[{"name":"Rae","role":"researcher","goal":"gather"},'
+    ' {"name":"Val","role":"writer","goal":"write"}]'
+)
+
+
+def test_parse_team_valid():
+    specs = _parse_team(VALID_JSON, max_agents=4)
+    assert [s.role for s in specs] == ["researcher", "writer"]
+    assert specs[0].name == "Rae"
+    assert all(isinstance(s, AgentSpec) for s in specs)
+
+
+def test_parse_team_extracts_json_from_prose():
+    text = "Sure! Here is the team:\n" + VALID_JSON + "\nHope that helps."
+    specs = _parse_team(text, max_agents=4)
+    assert len(specs) == 2
+
+
+def test_parse_team_clamps_to_max():
+    big = "[" + ",".join(
+        '{"name":"A%d","role":"r%d"}' % (i, i) for i in range(10)) + "]"
+    specs = _parse_team(big, max_agents=3)
+    assert len(specs) == 3
+
+
+def test_parse_team_drops_items_without_role():
+    text = '[{"name":"X"}, {"role":"writer"}]'
+    specs = _parse_team(text, max_agents=4)
+    assert len(specs) == 1
+    assert specs[0].role == "writer"
+
+
+def test_parse_team_garbage_returns_empty():
+    assert _parse_team("no json here", max_agents=4) == []
+    assert _parse_team("", max_agents=4) == []
+
+
+def test_plan_team_uses_planner_reply():
+    specs = plan_team("do X", planner=lambda p: VALID_JSON, max_agents=4)
+    assert [s.role for s in specs] == ["researcher", "writer"]
+
+
+def test_plan_team_falls_back_to_generalist_on_garbage():
+    specs = plan_team("do X", planner=lambda p: "nonsense", max_agents=4)
+    assert len(specs) == 1
+    assert specs[0].role == "generalist"
+
+
+def test_plan_team_passes_max_into_prompt():
+    seen = {}
+
+    def planner(prompt):
+        seen["p"] = prompt
+        return VALID_JSON
+
+    plan_team("the task", planner=planner, max_agents=5)
+    assert "the task" in seen["p"]
+    assert "5" in seen["p"]
+
+
+def test_build_crew_from_specs_runs():
+    specs = [AgentSpec("A", "researcher", "g1"), AgentSpec("B", "writer", "g2")]
+    crew = build_crew(specs, tools_enabled=False)
+    # Swap in fake responders so no LLM is needed.
+    for agent, out in zip(crew.agents, ["one", "two"]):
+        agent._responder = (lambda o: (lambda p: o))(out)
+    run = crew.run("task")
+    assert run.final_output == "two"
     assert run.agents == ["A", "B"]

@@ -25,6 +25,8 @@ leave it out and the agent lazily builds a real ``ConversacionChat`` (which, wit
 no provider configured, simply answers in simulation mode).
 """
 
+import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
@@ -163,3 +165,99 @@ def run_pair(task: str, first: Agent, second: Agent) -> CrewRun:
     """Convenience for the Phase-0 two-agent case: ``first`` does the work,
     ``second`` reviews/refines it."""
     return Crew([first, second]).run(task)
+
+
+# --- Dynamic team planning --------------------------------------------------
+#
+# Instead of the human spelling out the roster, a planner agent reads the task
+# and proposes the *smallest* team that can solve it by collaborating. The user
+# can still review/edit the proposal before it runs — which doubles as oversight,
+# the same spirit as the rest of the app's security model.
+
+@dataclass
+class AgentSpec:
+    """A planned agent before it's instantiated: just a role on paper."""
+    name: str
+    role: str
+    goal: str = ""
+
+
+_PLAN_PROMPT = (
+    "You are a planner. Break the task below into the SMALLEST team of "
+    "specialized agents that can solve it well by collaborating in sequence — "
+    "each agent builds on the previous one's output. Use between 1 and {max} "
+    "agents: only as many as genuinely help; do not pad the team.\n\n"
+    "Reply with ONLY a JSON array, no prose before or after. Each item:\n"
+    '  {{"name": "<short name>", "role": "<what they are>", '
+    '"goal": "<their concrete job>"}}\n\n'
+    "Task:\n{task}"
+)
+
+
+def _parse_team(text: str, max_agents: int) -> List[AgentSpec]:
+    """Pull a team out of the planner's reply. Tolerant: finds the JSON array
+    even if the model wrapped it in prose, and drops malformed items. Returns an
+    empty list if nothing usable is found (the caller decides the fallback)."""
+    if not text:
+        return []
+    # Grab from the first '[' to the last ']' — survives stray prose/code fences.
+    start, end = text.find("["), text.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        return []
+    try:
+        raw = json.loads(text[start:end + 1])
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(raw, list):
+        return []
+
+    specs: List[AgentSpec] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        if not role:
+            continue
+        name = str(item.get("name") or f"Agent {len(specs) + 1}").strip()
+        goal = str(item.get("goal") or "").strip()
+        specs.append(AgentSpec(name=name, role=role, goal=goal))
+        if len(specs) >= max_agents:
+            break
+    return specs
+
+
+def plan_team(task: str, planner: Optional[Responder] = None,
+              max_agents: int = 4) -> List[AgentSpec]:
+    """Ask the planner how many agents (and which roles) this task needs.
+
+    ``planner`` is the LLM seam for testing. Without it, a tool-less
+    ConversacionChat does the planning. Always returns at least one agent: if the
+    model is unavailable or its answer can't be parsed, it falls back to a single
+    generalist, so the crew can still run."""
+    max_agents = max(1, int(max_agents))
+    prompt = _PLAN_PROMPT.format(max=max_agents, task=task)
+
+    if planner is not None:
+        reply = planner(prompt)
+    else:
+        from core.conversaciones import GestorConversaciones
+        from core.chat import ConversacionChat
+        conv_dir = GestorConversaciones().crear_conversacion("crew · planner")
+        chat = ConversacionChat(conv_dir)
+        if hasattr(chat, "tools_habilitadas"):
+            chat.tools_habilitadas = False
+        reply = chat.enviar(prompt)
+
+    specs = _parse_team(reply, max_agents)
+    if not specs:
+        specs = [AgentSpec("Agent", "generalist",
+                           "solve the whole task on your own")]
+    return specs
+
+
+def build_crew(specs: List[AgentSpec], tools_enabled: bool = True,
+               name: str = "crew") -> Crew:
+    """Turn a planned roster into a runnable Crew."""
+    agents = [Agent(s.name, s.role, s.goal, tools_enabled=tools_enabled)
+              for s in specs]
+    return Crew(agents, name=name)

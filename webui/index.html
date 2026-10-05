@@ -206,6 +206,15 @@
           <button id="cfg-probar" onclick="probarProveedor()">Probar conexión</button>
           <span id="cfg-estado"></span>
         </div>
+
+        <h2 style="margin-top:30px">Distribuir</h2>
+        <p class="sub">Armá un paquete para compartir. Antes de generarlo revisa que
+           no viajen credenciales; si encuentra algo, no lo arma.</p>
+        <div class="acciones" style="padding-left:0">
+          <button id="pkg-zip" onclick="crearPaquete('zip')" style="background:var(--panel);border:1px solid #c8ccd4">📦 Crear .zip portable</button>
+          <button id="pkg-dmg" onclick="crearPaquete('dmg')" style="background:var(--panel);border:1px solid #c8ccd4">🐋 Crear .dmg (Mac)</button>
+          <span id="pkg-estado"></span>
+        </div>
       </div>
     </section>
 
@@ -529,6 +538,16 @@
     const r = await window.pywebview.api.guardar_config(cambios);
     if (r.ok) { est.textContent = "✅ Guardado."; est.className = "ok"; cargarConfig(); }
     else { est.textContent = "❌ " + (r.error || "no se pudo guardar"); est.className = "err"; }
+  }
+  async function crearPaquete(fmt){
+    const est = $("#pkg-estado"); est.textContent = "armando… (puede tardar unos segundos)"; est.className = "";
+    $("#pkg-zip").disabled = true; $("#pkg-dmg").disabled = true;
+    try {
+      const r = await window.pywebview.api.crear_paquete(fmt);
+      if (r.cancelado) { est.textContent = ""; return; }
+      if (r.ok) { est.textContent = "✅ Listo: " + r.ruta; est.className = "ok"; }
+      else { est.textContent = "❌ " + (r.error || "falló") + (r.detalle ? (" — " + JSON.stringify(r.detalle)) : ""); est.className = "err"; }
+    } finally { $("#pkg-zip").disabled = false; $("#pkg-dmg").disabled = false; }
   }
   async function probarProveedor() {
     const est = $("#cfg-estado"); est.textContent = "Probando…"; est.className = "";

@@ -221,6 +221,40 @@ class Puente:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # -- empaquetar / distribuir -------------------------------------------
+
+    def crear_paquete(self, formato_pkg: str) -> Dict[str, Any]:
+        """Arma un paquete para compartir: 'zip' (portable, multiplataforma) o
+        'dmg' (instalador de Mac). Pregunta dónde guardarlo con el diálogo nativo.
+        Revisa que no viajen credenciales antes de generarlo."""
+        import webview
+        from core import empaquetar
+        es_dmg = (formato_pkg == "dmg")
+        sugerido = "AgentFactory-0.2.dmg" if es_dmg else "AgentFactory-portable.zip"
+        try:
+            ruta = self.window.create_file_dialog(webview.SAVE_DIALOG, save_filename=sugerido)
+        except Exception as e:
+            return {"ok": False, "error": f"no pude abrir el diálogo: {e}"}
+        if not ruta:
+            return {"ok": False, "cancelado": True}
+        destino = Path(ruta if isinstance(ruta, str) else ruta[0])
+
+        if es_dmg:
+            app = destino.parent / "AgentFactory.app"
+            r = empaquetar.construir_app(app)
+            if "error" in r:
+                return {"ok": False, "error": r["error"],
+                        "detalle": r.get("faltan") or r.get("hallazgos")}
+            d = empaquetar.construir_dmg(destino, app)
+            if "error" in d:
+                return {"ok": False, "error": d["error"]}
+            return {"ok": True, "ruta": d["dmg"], "bytes": d.get("bytes", 0)}
+
+        r = empaquetar.crear_zip(destino)
+        if "error" in r:
+            return {"ok": False, "error": r["error"], "detalle": r.get("hallazgos")}
+        return {"ok": True, "ruta": str(destino), "bytes": r.get("bytes", 0)}
+
     # -- enjambre (multi-agente) -------------------------------------------
 
     def _emitir_msg(self, m):

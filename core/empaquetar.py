@@ -60,7 +60,10 @@ EXCLUIR_ARCHIVOS = {"main.py", "iniciar_interactivo.sh", ".icon",
 # "al paquete le faltan archivos" SIEMPRE, en cualquier sistema. La ruta del
 # zip portable estaba rota de entrada.
 REQUERIDOS_COMUNES = ["bootstrap.py", "main_ui.py", "requirements.txt",
-                      "core/chat.py", "core/rutas.py", "core/plataforma.py"]
+                      "core/chat.py", "core/rutas.py", "core/plataforma.py",
+                      # UI web (default): sin estos, el paquete abre Tkinter.
+                      "main_web.py", "requirements-web.txt",
+                      "webui/puente.py", "webui/index.html"]
 
 # Los arrancadores de cada sistema. Se piden los dos: un paquete tiene que
 # poder abrirse tanto en la Mac como en Windows, que es el punto de que la app

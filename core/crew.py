@@ -92,6 +92,11 @@ class Agent:
             return self._responder(prompt)
         return self._real_chat().enviar(prompt)
 
+    def respond(self, text: str) -> str:
+        """Raw reply to an already-framed prompt (used by the interactive Room,
+        which builds its own room-aware prompt instead of the role template)."""
+        return self._reply(text)
+
     def cancel(self):
         """Best-effort stop: ask the agent's underlying chat to abort its tool
         loop. A single LLM call already in flight can't be interrupted cleanly,
@@ -225,8 +230,8 @@ _PLAN_PROMPT = (
     "each agent builds on the previous one's output. Use between 1 and {max} "
     "agents: only as many as genuinely help; do not pad the team.\n\n"
     "Reply with ONLY a JSON array, no prose before or after. Each item:\n"
-    '  {{"name": "<short name>", "role": "<what they are>", '
-    '"goal": "<their concrete job>"}}\n\n'
+    '  {{"name": "<ONE short word, no spaces, easy to @mention>", '
+    '"role": "<what they are>", "goal": "<their concrete job>"}}\n\n'
     "Task:\n{task}"
 )
 
@@ -298,3 +303,129 @@ def build_crew(specs: List[AgentSpec], tools_enabled: bool = True,
     agents = [Agent(s.name, s.role, s.goal, tools_enabled=tools_enabled)
               for s in specs]
     return Crew(agents, name=name)
+
+
+# --- Interactive room (swarm + human-in-the-loop) ---------------------------
+#
+# A Room turns the one-shot relay into a live group chat the human takes part in.
+# Everyone reads everyone by default, EXCEPT a message the human directs with
+# "@Name ...", which is private to that agent — the others never receive it. A
+# plain message goes to the whole room and every agent answers in turn.
+
+@dataclass
+class Message:
+    speaker: str                   # "user", "system", or an agent's name
+    text: str
+    audience: str = "all"          # "all" (public) or an agent name (private)
+    ts: float = field(default_factory=time.time)
+
+
+_ROOM_PROMPT = (
+    "You are «{name}» in a group chat, acting as: {role}. Your goal: {goal}.\n"
+    "Teammates and the human share this room and read what you write. New "
+    "messages since your last turn:\n-----\n{context}\n-----\n"
+    "Reply briefly and in character as «{name}», in the same language as the "
+    "conversation. Don't prefix your reply with your own name."
+)
+
+
+def parse_mention(text: str):
+    """('Name', 'rest') if the message starts with @Name, else (None, text)."""
+    m = re.match(r"\s*@([^\s:,]+)[\s:,]*(.*)", text, re.DOTALL)
+    if m:
+        return m.group(1), m.group(2).strip()
+    return None, text
+
+
+class Room:
+    """A live group chat over a set of agents, with the human as a participant.
+
+    ``progress`` (if given) is called with each new ``Message`` as it appears, so
+    a UI can render the room live. ``should_stop`` is checked before each agent
+    turn. Each agent keeps its own memory (its ConversacionChat); the room only
+    feeds each agent the messages it is allowed to see since its last turn."""
+
+    def __init__(self, agents: List[Agent]):
+        if not agents:
+            raise ValueError("a room needs at least one agent")
+        self.agents = list(agents)
+        self._by_name = {a.name: a for a in self.agents}
+        self.transcript: List[Message] = []
+        self._seen = {a.name: 0 for a in self.agents}   # index consumed per agent
+
+    def has_agent(self, name: str) -> bool:
+        return name in self._by_name
+
+    def _resolve_mention(self, text: str):
+        """('AgentName', 'body') if the message starts with @ and names a real
+        agent (matched case-insensitively, longest name wins so multi-word names
+        work), else (None, text) → broadcast. Resolving against the actual roster
+        is what makes '@Naming Specialist' target the right agent."""
+        t = text.lstrip()
+        if not t.startswith("@"):
+            return None, text
+        rest = t[1:]
+        low = rest.lower()
+        best = None
+        for name in self._by_name:
+            if low.startswith(name.lower()) and (best is None or len(name) > len(best)):
+                best = name
+        if best is None:
+            return None, text
+        return best, rest[len(best):].lstrip(" :,").strip()
+
+    def _visible_for(self, name: str, upto: int) -> List[Message]:
+        """New messages an agent may read: public ones, its own, and private
+        ones addressed to it. A private @X message is invisible to everyone but X."""
+        out = []
+        for msg in self.transcript[self._seen[name]:upto]:
+            if msg.audience == "all" or msg.audience == name or msg.speaker == name:
+                out.append(msg)
+        return out
+
+    def _agent_turn(self, agent: Agent, emit) -> str:
+        upto = len(self.transcript)
+        nuevos = self._visible_for(agent.name, upto)
+        context = "\n".join(f"{m.speaker}: {m.text}" for m in nuevos) or "(nothing new)"
+        prompt = _ROOM_PROMPT.format(name=agent.name, role=agent.role,
+                                     goal=agent.goal, context=context)
+        reply = agent.respond(prompt)
+        self.transcript.append(Message(agent.name, reply, "all"))
+        self._seen[agent.name] = len(self.transcript)   # it has now seen its own
+        emit(self.transcript[-1])
+        return reply
+
+    def _emitter(self, progress):
+        return (lambda m: progress(m)) if progress else (lambda m: None)
+
+    def kickoff(self, task: str, progress=None, should_stop=None) -> None:
+        """Open the room with the initial task; every agent speaks once, in order,
+        each seeing the task and the teammates who went before it."""
+        emit = self._emitter(progress)
+        stop = lambda: bool(should_stop and should_stop())
+        self.transcript.append(Message("user", task, "all"))
+        emit(self.transcript[-1])
+        for agent in self.agents:
+            if stop():
+                break
+            self._agent_turn(agent, emit)
+
+    def user_message(self, text: str, progress=None, should_stop=None) -> None:
+        """The human speaks. '@Name ...' is private to Name (only Name answers);
+        anything else is public and every agent answers in turn."""
+        emit = self._emitter(progress)
+        stop = lambda: bool(should_stop and should_stop())
+
+        name, body = self._resolve_mention(text)
+        if name:
+            self.transcript.append(Message("user", body, name))   # private to Name
+            emit(self.transcript[-1])
+            if not stop():
+                self._agent_turn(self._by_name[name], emit)
+        else:
+            self.transcript.append(Message("user", text, "all"))  # public
+            emit(self.transcript[-1])
+            for agent in self.agents:
+                if stop():
+                    break
+                self._agent_turn(agent, emit)

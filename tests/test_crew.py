@@ -215,3 +215,96 @@ def test_should_stop_before_any_agent():
     assert ran == []
     assert run.stopped is True
     assert run.final_output == ""
+
+
+# --- Interactive Room ------------------------------------------------------
+
+from core.crew import Room, Message, parse_mention
+
+
+def test_parse_mention():
+    assert parse_mention("@Rae hacé X") == ("Rae", "hacé X")
+    assert parse_mention("@Val: dale") == ("Val", "dale")
+    assert parse_mention("hola a todos") == (None, "hola a todos")
+
+
+def test_room_kickoff_initial_round_in_order():
+    order = []
+    a = Agent("A", "r", responder=lambda p: (order.append("A") or "A-says"))
+    b = Agent("B", "w", responder=lambda p: (order.append("B") or "B-says"))
+    msgs = []
+    Room([a, b]).kickoff("tarea", progress=msgs.append)
+    assert order == ["A", "B"]
+    assert [m.speaker for m in msgs] == ["user", "A", "B"]
+    assert msgs[0].text == "tarea"
+
+
+def test_room_broadcast_all_respond():
+    order = []
+    a = Agent("A", "r", responder=lambda p: (order.append("A") or "A"))
+    b = Agent("B", "w", responder=lambda p: (order.append("B") or "B"))
+    room = Room([a, b])
+    room.user_message("che equipo")
+    assert order == ["A", "B"]
+
+
+def test_room_mention_targets_only_one():
+    got = {"A": 0, "B": 0}
+    a = Agent("A", "r", responder=lambda p: (got.__setitem__("A", got["A"] + 1) or "A"))
+    b = Agent("B", "w", responder=lambda p: (got.__setitem__("B", got["B"] + 1) or "B"))
+    room = Room([a, b])
+    msgs = []
+    room.user_message("@B solo vos", progress=msgs.append)
+    assert got == {"A": 0, "B": 1}                 # only B answered
+    assert msgs[0].speaker == "user" and msgs[0].audience == "B"
+    assert msgs[1].speaker == "B"
+
+
+def test_room_private_message_hidden_from_others():
+    seen_A = []
+    a = Agent("A", "r", responder=lambda p: (seen_A.append(p) or "A"))
+    b = Agent("B", "w", responder=lambda p: "B")
+    room = Room([a, b])
+    room.user_message("@B un secreto para B")       # private to B
+    room.user_message("mensaje público")            # A answers now
+    joined = "\n".join(seen_A)
+    assert "un secreto para B" not in joined         # A never saw the private one
+    assert "mensaje público" in joined
+
+
+def test_room_unknown_mention_is_broadcast():
+    order = []
+    a = Agent("A", "r", responder=lambda p: (order.append("A") or "A"))
+    room = Room([a])
+    room.user_message("@Nadie hola")                 # no such agent -> broadcast
+    assert order == ["A"]
+
+
+def test_room_requires_agents():
+    with pytest.raises(ValueError):
+        Room([])
+
+
+def test_room_resolves_multiword_mention():
+    a = Agent("Naming Specialist", "namer", responder=lambda p: "N")
+    b = Agent("Critico", "reviewer", responder=lambda p: "C")
+    room = Room([a, b])
+    # multi-word name with a space must still target that one agent
+    assert room._resolve_mention("@Naming Specialist dame otra") == (
+        "Naming Specialist", "dame otra")
+    # case-insensitive
+    assert room._resolve_mention("@critico opiná")[0] == "Critico"
+    # unknown -> broadcast
+    assert room._resolve_mention("@Nadie hola") == (None, "@Nadie hola")
+
+
+def test_room_multiword_mention_targets_only_one():
+    hits = {"Naming Specialist": 0, "Critico": 0}
+    a = Agent("Naming Specialist", "namer",
+              responder=lambda p: (hits.__setitem__("Naming Specialist",
+                                   hits["Naming Specialist"] + 1) or "N"))
+    b = Agent("Critico", "reviewer",
+              responder=lambda p: (hits.__setitem__("Critico", hits["Critico"] + 1) or "C"))
+    room = Room([a, b])
+    room.user_message("@Naming Specialist una variante corta")
+    assert hits == {"Naming Specialist": 1, "Critico": 0}

@@ -40,7 +40,29 @@
   .conv.sel { background:#e6e9ff; border-left:3px solid var(--acento); padding-left:11px; }
   .conv .n { color:var(--tenue); font-size:11px; }
   #chatmain { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #chat-cab { border-bottom:1px solid var(--borde); padding:10px 26px; display:flex;
+              align-items:center; gap:8px; }
+  #chat-titulo { font-weight:700; font-size:14px; }
+  #chat-editar { border:0; background:transparent; cursor:pointer; font-size:14px; opacity:.6; }
+  #chat-editar:hover { opacity:1; }
   #trans { flex:1; overflow-y:auto; padding:22px 26px; }
+
+  /* ejecuciones locales (shell, biblioteca, paquetes…) */
+  .exec { max-width:820px; margin:0 auto 12px; border:1px solid var(--borde);
+          border-radius:8px; background:#fbfbfc; }
+  .exec summary { cursor:pointer; padding:7px 12px; font-size:13px; list-style:none; }
+  .exec summary::-webkit-details-marker { display:none; }
+  .exec summary::before { content:"➕ "; color:var(--tenue); }
+  .exec[open] summary::before { content:"➖ "; }
+  .exec .args { color:var(--tenue); font:12px Menlo,monospace; }
+  .exec pre { margin:0; padding:10px 12px; background:#0f1115; color:#cfe3d8;
+              border-radius:0 0 8px 8px; overflow-x:auto; font:12px Menlo,monospace;
+              white-space:pre-wrap; word-break:break-word; }
+
+  /* grupo enjambre en la lista */
+  .grupo { padding:9px 14px; cursor:pointer; border-bottom:1px solid var(--borde);
+           font-size:13px; font-weight:600; background:#eef0f3; }
+  .conv.hijo { padding-left:30px; background:#fafbfc; }
   .msg { max-width:820px; margin:0 auto 20px; }
   .quien { font-size:12px; font-weight:700; margin-bottom:4px; }
   .msg.user .quien { color:var(--usuario); }
@@ -102,6 +124,10 @@
         <div id="lista"></div>
       </div>
       <div id="chatmain">
+        <div id="chat-cab" style="display:none">
+          <span id="chat-titulo"></span>
+          <button id="chat-editar" title="Renombrar conversación" onclick="renombrarConversacion()">✏️</button>
+        </div>
         <div id="trans"><p class="vacio">Elegí una conversación o creá una nueva.</p></div>
         <div id="barra">
           <textarea id="entrada" rows="1" placeholder="Escribí un mensaje…  (Enter envía, Shift+Enter salto)"></textarea>
@@ -159,32 +185,84 @@
   document.querySelectorAll(".rail-b").forEach(b => b.onclick = () => irA(b.dataset.tab));
 
   // ===================== CHAT =====================
-  let convActual = null, burbujaAgente = null, bufferStream = "";
+  let convActual = null, burbujaAgente = null, bufferStream = "", enjambreAbierto = false;
   const trans = () => $("#trans");
   function alFondo() { const t = trans(); t.scrollTop = t.scrollHeight; }
 
+  function filaConv(c, hijo) {
+    const div = document.createElement("div");
+    div.className = "conv" + (hijo ? " hijo" : "") + (c.nombre === convActual ? " sel" : "");
+    div.onclick = () => abrirConversacion(c.nombre);
+    const icono = (c.crew && !hijo) ? "🤝 " : "";
+    div.innerHTML = `<div>${icono}${escapar(c.titulo)}</div><div class="n">${c.mensajes} mensaje(s)</div>`;
+    return div;
+  }
   async function refrescarLista() {
     const convs = await window.pywebview.api.listar_conversaciones();
     const cont = $("#lista"); cont.innerHTML = "";
-    for (const c of convs) {
-      const div = document.createElement("div");
-      div.className = "conv" + (c.nombre === convActual ? " sel" : "");
-      div.onclick = () => abrirConversacion(c.nombre);
-      const icono = c.crew ? "🤝 " : "";
-      div.innerHTML = `<div>${icono}${escapar(c.titulo)}</div><div class="n">${c.mensajes} mensaje(s)</div>`;
-      cont.appendChild(div);
+    const normales = convs.filter(c => !c.crew);
+    const enjambre = convs.filter(c => c.crew);
+    for (const c of normales) cont.appendChild(filaConv(c, false));
+    if (enjambre.length) {
+      // El enjambre va agrupado en UN nodo con + para desplegar las
+      // sub-conversaciones (una por agente).
+      const g = document.createElement("div");
+      g.className = "grupo";
+      g.textContent = (enjambreAbierto ? "➖" : "➕") + " 🤝 Enjambre (" + enjambre.length + ")";
+      g.onclick = () => { enjambreAbierto = !enjambreAbierto; refrescarLista(); };
+      cont.appendChild(g);
+      if (enjambreAbierto) for (const c of enjambre) cont.appendChild(filaConv(c, true));
     }
   }
   async function abrirConversacion(nombre) {
     convActual = nombre;
     const data = await window.pywebview.api.cargar_conversacion(nombre);
+    $("#chat-cab").style.display = "flex";
+    $("#chat-titulo").textContent = data.titulo;
     const t = trans(); t.innerHTML = "";
-    for (const m of data.mensajes) pintarMensaje(m.rol, m.html);
+    for (const it of data.mensajes) pintarItem(it);
     mejorarCodigo(); alFondo(); refrescarLista(); $("#entrada").focus();
   }
   async function nuevaConversacion() {
     const nombre = await window.pywebview.api.nueva_conversacion("");
-    await refrescarLista(); abrirConversacion(nombre);
+    await refrescarLista(); await abrirConversacion(nombre);
+    renombrarConversacion();     // arranca editando el título
+  }
+  function renombrarConversacion() {
+    if (!convActual) return;
+    const span = $("#chat-titulo"); const actual = span.textContent;
+    const inp = document.createElement("input");
+    inp.type = "text"; inp.id = "chat-titulo"; inp.value = actual;
+    inp.style.cssText = "font-weight:700;font-size:14px;flex:1;max-width:420px;"
+                      + "border:1px solid #c8ccd4;border-radius:6px;padding:3px 8px;";
+    span.replaceWith(inp); inp.focus(); inp.select();
+    let listo = false;
+    const cerrar = (texto) => {
+      if (listo) return; listo = true;
+      const nuevo = document.createElement("span"); nuevo.id = "chat-titulo";
+      nuevo.textContent = texto; inp.replaceWith(nuevo);
+    };
+    const guardar = async () => {
+      const t = inp.value.trim() || actual;
+      const r = await window.pywebview.api.renombrar_conversacion(convActual, t);
+      cerrar((r && r.titulo) ? r.titulo : t); refrescarLista();
+    };
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); guardar(); }
+      else if (e.key === "Escape") { cerrar(actual); }
+    });
+    inp.addEventListener("blur", guardar);
+  }
+  function pintarItem(it) {
+    if (it.tipo === "tool") return pintarTool(it);
+    return pintarMensaje(it.tipo, it.html);
+  }
+  function pintarTool(it) {
+    const d = document.createElement("details"); d.className = "exec";
+    const args = (it.args || "").replace(/\s+/g, " ").trim().slice(0, 90);
+    d.innerHTML = `<summary>🔧 <b>${escapar(it.nombre)}</b> <span class="args">${escapar(args)}</span></summary>`
+                + `<pre>${escapar(it.resultado || "")}</pre>`;
+    trans().appendChild(d); return d;
   }
   function pintarMensaje(rol, html) {
     const div = document.createElement("div");
@@ -208,9 +286,11 @@
     if (burbujaAgente) burbujaAgente.querySelector(".burbuja").textContent = bufferStream + "▍";
     alFondo();
   }
-  function chatFinRespuesta(html) {
-    if (burbujaAgente) burbujaAgente.querySelector(".burbuja").innerHTML = html;
-    burbujaAgente = null; mejorarCodigo(); $("#enviar").disabled = false; alFondo(); refrescarLista();
+  function chatFin(nombre) {
+    // Recarga toda la conversación: así aparecen las ejecuciones (shell,
+    // biblioteca, paquetes…) además del texto final.
+    burbujaAgente = null; $("#enviar").disabled = false;
+    if (nombre === convActual) abrirConversacion(nombre);
   }
   function chatError(txt) {
     pintarMensaje("assistant", `<pre style="color:#ff8a8a">${escapar(txt)}</pre>`);

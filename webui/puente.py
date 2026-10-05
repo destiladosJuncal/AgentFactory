@@ -70,23 +70,54 @@ class Puente:
         return chat
 
     def cargar_conversacion(self, nombre: str) -> Dict[str, Any]:
+        """Items de la conversación, incluidas las EJECUCIONES locales (shell,
+        biblioteca, paquetes, etc.): se muestran como bloques de herramienta con
+        su resultado, igual que en la app de escritorio."""
         chat = self._chat(nombre)
-        mensajes = []
+        meta_tool: Dict[str, Dict[str, str]] = {}   # id -> {nombre, args}
+        items = []
         for m in chat.mensajes:
             rol = m.get("role")
-            if rol not in ("user", "assistant"):
-                continue                       # tool calls, etc.: no se muestran
-            contenido = m.get("content") or ""
-            if not contenido:
-                continue
-            mensajes.append({"rol": rol, "html": md_a_html(contenido)})
+            if rol == "user":
+                items.append({"tipo": "user", "html": md_a_html(m.get("content") or "")})
+            elif rol == "assistant":
+                for tc in (m.get("tool_calls") or []):
+                    fn = tc.get("function", {})
+                    meta_tool[tc.get("id")] = {"nombre": fn.get("name", "herramienta"),
+                                               "args": fn.get("arguments", "")}
+                cont = (m.get("content") or "").strip()
+                if cont:
+                    items.append({"tipo": "assistant", "html": md_a_html(cont)})
+            elif rol == "tool":
+                meta = meta_tool.get(m.get("tool_call_id"), {})
+                items.append({
+                    "tipo": "tool",
+                    "nombre": meta.get("nombre", "herramienta"),
+                    "args": meta.get("args", ""),
+                    "resultado": m.get("content") or "",
+                })
         return {"nombre": nombre,
                 "titulo": chat.meta.get("titulo", nombre),
-                "mensajes": mensajes}
+                "mensajes": items}
 
     def nueva_conversacion(self, titulo: str = "") -> str:
         d = self.gestor.crear_conversacion((titulo or "").strip())
         return d.name
+
+    def renombrar_conversacion(self, nombre: str, titulo: str) -> Dict[str, Any]:
+        """Cambia el título visible (en meta.json). No toca la carpeta ni el
+        historial, así que no rompe nada que apunte al slug."""
+        titulo = (titulo or "").strip()
+        if not titulo:
+            return {"ok": False}
+        try:
+            chat = self._chat(nombre)
+            chat.meta["titulo"] = titulo
+            chat.meta_path.write_text(
+                json.dumps(chat.meta, indent=2, ensure_ascii=False), encoding="utf-8")
+            return {"ok": True, "titulo": titulo}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     # -- enviar (con streaming) --------------------------------------------
 
@@ -109,8 +140,11 @@ class Puente:
         self._js("chatUsuario", md_a_html(texto))
         self._js("chatInicioRespuesta")
         try:
-            respuesta = chat.enviar(texto, al_fragmento=lambda t: self._js("chatFragmento", t))
-            self._js("chatFinRespuesta", md_a_html(respuesta))
+            chat.enviar(texto, al_fragmento=lambda t: self._js("chatFragmento", t))
+            # Al terminar se recarga toda la conversación: así aparecen las
+            # ejecuciones (shell, biblioteca, paquetes…) que ocurrieron en el
+            # medio, no solo el texto final.
+            self._js("chatFin", nombre)
         except Exception:
             self._js("chatError", traceback.format_exc())
 

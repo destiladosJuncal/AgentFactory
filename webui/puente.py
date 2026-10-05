@@ -12,6 +12,7 @@ New code, in English, except for the strings that are shown to the user.
 import json
 import threading
 import traceback
+from pathlib import Path
 from typing import Any, Dict, List
 
 import markdown as _md
@@ -225,19 +226,18 @@ class Puente:
 
     def crear_paquete(self, formato_pkg: str) -> Dict[str, Any]:
         """Arma un paquete para compartir: 'zip' (portable, multiplataforma) o
-        'dmg' (instalador de Mac). Pregunta dónde guardarlo con el diálogo nativo.
-        Revisa que no viajen credenciales antes de generarlo."""
-        import webview
+        'dmg' (instalador de Mac). Lo guarda en ~/Downloads y devuelve la ruta.
+
+        (No usa el diálogo nativo de "guardar" a propósito: llamado desde el hilo
+        del bridge, en macOS ese modal se cuelga. Guardar en una carpeta conocida
+        y abrirla es más robusto.)"""
         from core import empaquetar
         es_dmg = (formato_pkg == "dmg")
         sugerido = "AgentFactory-0.2.dmg" if es_dmg else "AgentFactory-portable.zip"
-        try:
-            ruta = self.window.create_file_dialog(webview.SAVE_DIALOG, save_filename=sugerido)
-        except Exception as e:
-            return {"ok": False, "error": f"no pude abrir el diálogo: {e}"}
-        if not ruta:
-            return {"ok": False, "cancelado": True}
-        destino = Path(ruta if isinstance(ruta, str) else ruta[0])
+        carpeta = Path.home() / "Downloads"
+        if not carpeta.is_dir():
+            carpeta = Path.home()
+        destino = carpeta / sugerido
 
         if es_dmg:
             app = destino.parent / "AgentFactory.app"
@@ -248,12 +248,22 @@ class Puente:
             d = empaquetar.construir_dmg(destino, app)
             if "error" in d:
                 return {"ok": False, "error": d["error"]}
+            self._abrir_carpeta_de(destino)
             return {"ok": True, "ruta": d["dmg"], "bytes": d.get("bytes", 0)}
 
         r = empaquetar.crear_zip(destino)
         if "error" in r:
             return {"ok": False, "error": r["error"], "detalle": r.get("hallazgos")}
+        self._abrir_carpeta_de(destino)
         return {"ok": True, "ruta": str(destino), "bytes": r.get("bytes", 0)}
+
+    @staticmethod
+    def _abrir_carpeta_de(archivo: Path):
+        try:
+            from core import plataforma
+            plataforma.abrir_carpeta(Path(archivo).parent)
+        except Exception:
+            pass
 
     # -- enjambre (multi-agente) -------------------------------------------
 

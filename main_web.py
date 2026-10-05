@@ -17,6 +17,12 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 
+# Misma carpeta de datos que la app de escritorio (INICIAR.command exporta
+# AGENTE_DATOS=~/tmp/agentfactory). Sin esto, al correr main_web.py "suelto" caía
+# al default ~/tmp/agent_code y mostraba otras conversaciones (no las tuyas).
+# `setdefault` respeta un AGENTE_DATOS que ya hayas puesto vos.
+os.environ.setdefault("AGENTE_DATOS", str(Path.home() / "tmp" / "agentfactory"))
+
 from core import rutas
 rutas.cargar_env()
 

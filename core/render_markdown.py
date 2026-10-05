@@ -263,31 +263,75 @@ def _repartir_columnas(filas: List[List[str]], disponible: int) -> List[int]:
 
 
 def _render_tabla(texto, filas: List[List[str]]):
-    """Dibuja la tabla como grilla de caracteres, envolviendo dentro de cada
-    celda para que la fila nunca supere el ancho del widget."""
+    """Dibuja la tabla como un WIDGET real (grilla de celdas nativas) embebido en
+    la transcripción, en vez de alinearla a mano con caracteres.
+
+    El enfoque ASCII dependía de medir la fuente monoespaciada y el ancho exacto
+    del widget; en pantallas HiDPI ese cálculo se iba y el propio Text envolvía
+    las filas, rompiendo la alineación. Con celdas de verdad (tk.Label en una
+    grilla, con wraplength por columna) el texto largo envuelve DENTRO de su celda
+    y las columnas quedan derechas siempre, sin contar caracteres."""
+    import tkinter as tk
+    try:
+        _render_tabla_widget(texto, filas)
+    except Exception:
+        # Si algo falla armando el widget, se cae a un volcado de texto simple:
+        # feo pero nunca rompe el render de la conversación.
+        for fila in filas:
+            texto.insert("end", "  " + "  |  ".join(fila) + "\n", "md_tabla")
+        texto.insert("end", "\n")
+
+
+def _render_tabla_widget(texto, filas: List[List[str]]):
+    import tkinter as tk
+
     columnas = max(len(f) for f in filas)
     filas = [f + [""] * (columnas - len(f)) for f in filas]
-    anchos = _repartir_columnas(filas, _ancho_disponible(texto))
 
-    def emitir(celdas, tag):
-        # Cada celda puede ocupar varias líneas; la fila mide lo que la más alta.
-        # Las columnas se separan con ' │ ': cuando una celda envuelve en varias
-        # líneas, ese guía vertical deja ver a qué columna pertenece cada
-        # continuación (sin él, el texto largo quedaba flotando sin referencia).
-        partidas = [_cortar_celda(c, anchos[i]) for i, c in enumerate(celdas)]
-        alto = max(len(p) for p in partidas)
-        for n in range(alto):
-            linea = " │ ".join(
-                _rellenar(partidas[i][n] if n < len(partidas[i]) else "", anchos[i])
-                for i in range(columnas))
-            texto.insert("end", "  " + linea + "\n", tag)
+    # Colores tomados de los tags ya configurados (así sigue la paleta de la app).
+    fg = texto.tag_cget("md_tabla", "foreground") or "#1c1e21"
+    borde = texto.tag_cget("md_regla", "foreground") or "#c8ccd4"
+    try:
+        fondo = texto.cget("bg")
+    except Exception:
+        fondo = "#ffffff"
+    try:
+        fondo_cab = texto.tag_cget("md_codigo", "background") or "#f4f5f7"
+    except Exception:
+        fondo_cab = "#f4f5f7"
+    fuente_ui = plataforma.fuentes()[0]
 
-    emitir(filas[0], "md_tabla_encabezado")
-    # La regla usa '─┼─' en los cruces, alineada con el ' │ ' de las filas.
-    texto.insert("end", "  " + "─┼─".join("─" * a for a in anchos) + "\n", "md_regla")
-    for fila in filas[1:]:
-        emitir(fila, "md_tabla")
-    texto.insert("end", "\n")
+    # Ancho disponible en píxeles, y reparto por columna según el contenido.
+    ancho_px = texto.winfo_width()
+    if ancho_px <= 1:
+        ancho_px = 700
+    disponible = max(320, ancho_px - 70)             # margen del Text + sangría
+    naturales = [max(1, max(_ancho_visual(f[i]) for f in filas)) for i in range(columnas)]
+    total = sum(naturales) or 1
+    # wraplength por columna (en px), con un mínimo para que no quede una columna
+    # de un carácter de ancho.
+    wrap = [max(70, int(disponible * n / total)) for n in naturales]
+
+    # El marco pintado del color del borde + 1px de separación entre celdas hace
+    # las líneas de la grilla (truco clásico, equivale a border-collapse en CSS).
+    marco = tk.Frame(texto, bg=borde, bd=0)
+    for c in range(columnas):
+        marco.grid_columnconfigure(c, weight=naturales[c])
+
+    for r, fila in enumerate(filas):
+        encabezado = (r == 0)
+        for c, celda in enumerate(fila):
+            lbl = tk.Label(
+                marco, text=celda, justify="left", anchor="nw",
+                wraplength=wrap[c],
+                bg=(fondo_cab if encabezado else fondo), fg=fg,
+                font=(fuente_ui, 11, "bold") if encabezado else (fuente_ui, 11),
+                padx=8, pady=5)
+            lbl.grid(row=r, column=c, sticky="nsew",
+                     padx=(1, 0) if c else (1, 1), pady=(1, 0) if r else (1, 1))
+
+    texto.window_create("end", window=marco)
+    texto.insert("end", "\n\n")
 
 
 # --- Bloques de código -----------------------------------------------------

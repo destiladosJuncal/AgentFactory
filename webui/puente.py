@@ -284,3 +284,44 @@ class Puente:
     def vaciar_captura(self) -> Dict[str, Any]:
         from core import proxy_tool
         return proxy_tool.vaciar_captura()
+
+    # -- tareas programadas -------------------------------------------------
+
+    _EMOJI_ESTADO = {"programada": "✅", "ausente": "⏸", "desconocido": "❓"}
+
+    def tareas_listar(self) -> List[Dict[str, Any]]:
+        from core import programador
+        out = []
+        for t in programador.listar_tareas():
+            estado = programador.estado_tarea(t["id"])
+            out.append({
+                "id": t["id"],
+                "titulo": t.get("titulo", "Tarea"),
+                "cuando": programador.describir(t),
+                "tipo": t.get("tipo", "agente"),
+                "estado": estado,
+                "emoji": self._EMOJI_ESTADO.get(estado, "❓"),
+                "ultima": t.get("ultima_corrida"),
+            })
+        return out
+
+    def tarea_corridas(self, tarea_id: str) -> List[Dict[str, Any]]:
+        from core import programador
+        return programador.corridas(tarea_id)[:10]
+
+    def tarea_correr(self, tarea_id: str) -> Dict[str, Any]:
+        from core import programador
+        err = programador.correr_ahora(tarea_id)
+        return {"ok": not err, "error": err}
+
+    def tarea_recargar(self, tarea_id: str) -> Dict[str, Any]:
+        from core import programador
+        return programador.recargar(tarea_id)
+
+    def tarea_borrar(self, tarea_id: str) -> Dict[str, Any]:
+        from core import programador
+        try:
+            programador.borrar_tarea(tarea_id)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}

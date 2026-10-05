@@ -334,9 +334,52 @@ def _render_tabla_widget(texto, filas: List[List[str]]):
     wrap = [max(70, int(disponible * n / total)) for n in naturales]
     cols_chars = [max(6, int(w / por_caracter)) for w in wrap]
 
+    def _rueda(e):
+        # Reenvía la rueda a la transcripción. Sin esto, la celda (que es un Text)
+        # se queda el evento e intenta scrollear SOLA — como no tiene de dónde, la
+        # conversación se "tranca" cuando el mouse pasa por encima de la tabla.
+        if e.num == 4:
+            texto.yview_scroll(-3, "units")
+        elif e.num == 5:
+            texto.yview_scroll(3, "units")
+        else:
+            paso = -e.delta if abs(e.delta) < 30 else int(-e.delta / 120) * 3
+            texto.yview_scroll(paso or (-1 if e.delta > 0 else 1), "units")
+        return "break"
+
+    def _menu_tabla(e):
+        # No se puede seleccionar a través de varias celdas (son widgets
+        # separados), así que el click derecho ofrece copiar la celda o la tabla
+        # entera (en Markdown, lista para pegar).
+        w = e.widget
+        menu = tk.Menu(texto, tearoff=0)
+
+        def copiar_celda():
+            try:
+                contenido = w.get("sel.first", "sel.last")
+            except Exception:
+                contenido = w.get("1.0", "end-1c")
+            texto.clipboard_clear()
+            texto.clipboard_append(contenido)
+
+        def copiar_tabla():
+            md = "\n".join("| " + " | ".join(f) + " |" for f in filas)
+            texto.clipboard_clear()
+            texto.clipboard_append(md)
+
+        menu.add_command(label="Copiar celda", command=copiar_celda)
+        menu.add_command(label="Copiar toda la tabla", command=copiar_tabla)
+        try:
+            menu.tk_popup(e.x_root, e.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
     # El marco pintado del color del borde + 1px de separación entre celdas hace
     # las líneas de la grilla (truco clásico, equivale a border-collapse en CSS).
     marco = tk.Frame(texto, bg=borde, bd=0)
+    for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        marco.bind(ev, _rueda)
 
     for r, fila in enumerate(filas):
         encabezado = (r == 0)
@@ -355,6 +398,11 @@ def _render_tabla_widget(texto, filas: List[List[str]]):
                          for parrafo in (celda.split("\n") or [""]))
             cel.configure(height=max(1, lineas))
             _solo_lectura(cel)
+            # Rueda → transcripción (scroll fluido); click derecho → copiar.
+            for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                cel.bind(ev, _rueda)
+            cel.bind("<Button-3>", _menu_tabla)
+            cel.bind("<Control-Button-1>", _menu_tabla)   # secundario en macOS
             cel.grid(row=r, column=c, sticky="nsew",
                      padx=(1, 0) if c else (1, 1), pady=(1, 0) if r else (1, 1))
 

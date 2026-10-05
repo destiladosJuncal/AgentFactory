@@ -108,6 +108,15 @@ class Puente:
         d = self.gestor.crear_conversacion((titulo or "").strip())
         return d.name
 
+    def abrir_carpeta_conversacion(self, nombre: str) -> Dict[str, Any]:
+        """Abre la carpeta de la conversación en el explorador del sistema."""
+        from core import plataforma
+        d = self.gestor.cargar_conversacion(nombre)
+        if d is None:
+            return {"ok": False, "error": "no existe la conversación"}
+        err = plataforma.abrir_carpeta(d)
+        return {"ok": not err, "error": err}
+
     def renombrar_conversacion(self, nombre: str, titulo: str) -> Dict[str, Any]:
         """Cambia el título visible (en meta.json). No toca la carpeta ni el
         historial, así que no rompe nada que apunte al slug."""

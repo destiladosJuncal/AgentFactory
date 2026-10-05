@@ -45,6 +45,9 @@
   #chat-titulo { font-weight:700; font-size:14px; }
   #chat-editar { border:0; background:transparent; cursor:pointer; font-size:14px; opacity:.6; }
   #chat-editar:hover { opacity:1; }
+  #chat-carpeta { border:1px solid var(--borde); background:var(--panel); cursor:pointer;
+                  font-size:12px; border-radius:7px; padding:3px 10px; color:#444; }
+  #chat-carpeta:hover { background:#e6e9ff; }
   #trans { flex:1; overflow-y:auto; padding:22px 26px; }
 
   /* ejecuciones locales (shell, biblioteca, paquetes…) */
@@ -180,6 +183,7 @@
         <div id="chat-cab" style="display:none">
           <span id="chat-titulo"></span>
           <button id="chat-editar" title="Renombrar conversación" onclick="renombrarConversacion()">✏️</button>
+          <button id="chat-carpeta" title="Abrir la carpeta de la conversación" onclick="abrirCarpeta()">📂 Abrir carpeta</button>
         </div>
         <div id="trans"><p class="vacio">Elegí una conversación o creá una nueva.</p></div>
         <div id="barra">
@@ -393,6 +397,10 @@
       else if (e.key === "Escape") { cerrar(actual); }
     });
     inp.addEventListener("blur", guardar);
+  }
+  async function abrirCarpeta() {
+    if (!convActual) return;
+    await window.pywebview.api.abrir_carpeta_conversacion(convActual);
   }
   function pintarItem(it) {
     if (it.tipo === "tool") return pintarTool(it);

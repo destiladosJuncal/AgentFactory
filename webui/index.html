@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>AgentFactory</title>
+<style>
+  :root {
+    --bg:#ffffff; --panel:#f4f5f7; --borde:#e2e5ea; --texto:#1c1e21;
+    --tenue:#7a808a; --usuario:#1a56db; --agente:#0f7b4f; --acento:#7c4dff;
+  }
+  * { box-sizing:border-box; -webkit-user-select:text; user-select:text; }
+  button, .chip { -webkit-user-select:none; user-select:none; }
+  ::selection { background:var(--acento); color:#fff; }
+  html,body { margin:0; height:100%; }
+  body { font:15px -apple-system,Helvetica,Arial,sans-serif; color:var(--texto);
+         background:var(--bg); display:flex; height:100vh; }
+
+  /* --- sidebar --- */
+  #lado { width:270px; min-width:270px; background:var(--panel);
+          border-right:1px solid var(--borde); display:flex; flex-direction:column; }
+  #lado h1 { font-size:15px; margin:0; padding:14px 16px; display:flex;
+             align-items:center; gap:8px; border-bottom:1px solid var(--borde); }
+  #nueva { margin:10px; padding:8px; border:0; border-radius:8px; cursor:pointer;
+           background:var(--acento); color:#fff; font-size:13px; }
+  #lista { overflow-y:auto; flex:1; }
+  .conv { padding:9px 14px; cursor:pointer; border-bottom:1px solid var(--borde);
+          font-size:13px; }
+  .conv:hover { background:#eef0f3; }
+  .conv.sel { background:#e6e9ff; border-left:3px solid var(--acento); padding-left:11px; }
+  .conv .n { color:var(--tenue); font-size:11px; }
+
+  /* --- chat --- */
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #trans { flex:1; overflow-y:auto; padding:22px 26px; }
+  .msg { max-width:820px; margin:0 auto 20px; }
+  .quien { font-size:12px; font-weight:700; margin-bottom:4px; }
+  .msg.user .quien { color:var(--usuario); }
+  .msg.assistant .quien { color:var(--agente); }
+  .burbuja { line-height:1.5; }
+  .burbuja p { margin:.4em 0; }
+  .burbuja h1,.burbuja h2,.burbuja h3 { margin:.6em 0 .3em; }
+
+  /* tablas: lo que empezó todo */
+  .burbuja table { border-collapse:collapse; margin:10px 0; width:100%; }
+  .burbuja th,.burbuja td { border:1px solid #c8ccd4; padding:8px 10px;
+                            text-align:left; vertical-align:top; word-break:break-word; }
+  .burbuja th { background:var(--panel); }
+  .burbuja tr:nth-child(even) td { background:#fafbfc; }
+
+  /* código */
+  .burbuja pre { background:#0f1115; color:#e7eaf1; border-radius:8px;
+                 padding:12px; overflow-x:auto; margin:10px 0; position:relative; }
+  .burbuja code { font:13px Menlo,monospace; }
+  .burbuja p code,.burbuja li code { background:var(--panel); color:#b4530a;
+                                     padding:1px 5px; border-radius:4px; }
+  .cp { position:absolute; top:6px; right:6px; font-size:12px; border:0;
+        border-radius:6px; padding:3px 9px; cursor:pointer;
+        background:#2b3140; color:#e7eaf1; opacity:0; transition:opacity .15s; }
+  .burbuja pre:hover .cp { opacity:1; }
+
+  /* --- input --- */
+  #barra { border-top:1px solid var(--borde); padding:12px 26px; display:flex;
+           gap:10px; align-items:flex-end; }
+  #entrada { flex:1; resize:none; font:15px -apple-system,sans-serif;
+             border:1px solid #c8ccd4; border-radius:10px; padding:10px 12px;
+             max-height:160px; }
+  #enviar { border:0; border-radius:10px; padding:10px 18px; cursor:pointer;
+            background:var(--usuario); color:#fff; font-size:14px; }
+  #enviar:disabled { opacity:.5; cursor:default; }
+  .vacio { color:var(--tenue); text-align:center; margin-top:40px; }
+</style></head>
+<body>
+  <aside id="lado">
+    <h1>🏭 AgentFactory</h1>
+    <button id="nueva" onclick="nuevaConversacion()">+ Nueva conversación</button>
+    <div id="lista"></div>
+  </aside>
+  <main id="main">
+    <div id="trans"><p class="vacio">Elegí una conversación o creá una nueva.</p></div>
+    <div id="barra">
+      <textarea id="entrada" rows="1" placeholder="Escribí un mensaje…  (Enter envía, Shift+Enter salto de línea)"></textarea>
+      <button id="enviar" onclick="enviar()">Enviar</button>
+    </div>
+  </main>
+
+<script>
+  let convActual = null;
+  let burbujaAgente = null;      // elemento de la respuesta en curso
+  let bufferStream = "";
+
+  const $ = (s) => document.querySelector(s);
+  const trans = () => $("#trans");
+
+  function alFondo() { const t = trans(); t.scrollTop = t.scrollHeight; }
+
+  // ---- lista de conversaciones ----
+  async function refrescarLista() {
+    const convs = await window.pywebview.api.listar_conversaciones();
+    const cont = $("#lista");
+    cont.innerHTML = "";
+    for (const c of convs) {
+      const div = document.createElement("div");
+      div.className = "conv" + (c.nombre === convActual ? " sel" : "");
+      div.onclick = () => abrirConversacion(c.nombre);
+      const icono = c.crew ? "🤝 " : "";
+      div.innerHTML = `<div>${icono}${escapar(c.titulo)}</div>`
+                    + `<div class="n">${c.mensajes} mensaje(s)</div>`;
+      cont.appendChild(div);
+    }
+  }
+
+  async function abrirConversacion(nombre) {
+    convActual = nombre;
+    const data = await window.pywebview.api.cargar_conversacion(nombre);
+    const t = trans();
+    t.innerHTML = "";
+    for (const m of data.mensajes) pintarMensaje(m.rol, m.html);
+    mejorarCodigo();
+    alFondo();
+    refrescarLista();
+    $("#entrada").focus();
+  }
+
+  async function nuevaConversacion() {
+    const nombre = await window.pywebview.api.nueva_conversacion("");
+    await refrescarLista();
+    abrirConversacion(nombre);
+  }
+
+  // ---- pintar mensajes ----
+  function pintarMensaje(rol, html) {
+    const div = document.createElement("div");
+    div.className = "msg " + rol;
+    div.innerHTML = `<div class="quien">${rol === "user" ? "🧑 Vos" : "● Agente"}</div>`
+                  + `<div class="burbuja">${html}</div>`;
+    trans().appendChild(div);
+    return div;
+  }
+
+  // ---- enviar + streaming (funciones llamadas desde Python) ----
+  function enviar() {
+    const ta = $("#entrada");
+    const texto = ta.value.trim();
+    if (!texto || !convActual) return;
+    ta.value = ""; ta.style.height = "auto";
+    $("#enviar").disabled = true;
+    window.pywebview.api.enviar(convActual, texto);
+  }
+  function chatUsuario(html) { pintarMensaje("user", html); alFondo(); }
+  function chatInicioRespuesta() {
+    bufferStream = "";
+    burbujaAgente = pintarMensaje("assistant", "<span style='color:#7a808a'>▍</span>");
+    alFondo();
+  }
+  function chatFragmento(t) {
+    bufferStream += t;
+    if (burbujaAgente)
+      burbujaAgente.querySelector(".burbuja").textContent = bufferStream + "▍";
+    alFondo();
+  }
+  function chatFinRespuesta(html) {
+    if (burbujaAgente) burbujaAgente.querySelector(".burbuja").innerHTML = html;
+    burbujaAgente = null;
+    mejorarCodigo();
+    $("#enviar").disabled = false;
+    alFondo();
+    refrescarLista();
+  }
+  function chatError(txt) {
+    pintarMensaje("assistant", `<pre style="color:#ff8a8a">${escapar(txt)}</pre>`);
+    burbujaAgente = null;
+    $("#enviar").disabled = false;
+    alFondo();
+  }
+
+  // ---- botón copiar en cada bloque de código ----
+  function mejorarCodigo() {
+    for (const pre of trans().querySelectorAll("pre")) {
+      if (pre.querySelector(".cp")) continue;
+      const b = document.createElement("button");
+      b.className = "cp"; b.textContent = "Copiar";
+      b.onclick = () => {
+        const code = pre.querySelector("code") || pre;
+        navigator.clipboard.writeText(code.innerText);
+        b.textContent = "✓ Copiado"; setTimeout(() => b.textContent = "Copiar", 1200);
+      };
+      pre.appendChild(b);
+    }
+  }
+
+  function escapar(s) {
+    const d = document.createElement("div"); d.textContent = s; return d.innerHTML;
+  }
+
+  // Enter envía, Shift+Enter salto; autoajuste de altura.
+  const ta = $("#entrada");
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); }
+  });
+  ta.addEventListener("input", () => {
+    ta.style.height = "auto"; ta.style.height = Math.min(160, ta.scrollHeight) + "px";
+  });
+
+  window.addEventListener("pywebviewready", refrescarLista);
+</script>
+</body></html>

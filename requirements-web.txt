@@ -1,0 +1,10 @@
+# Dependencias de la UI web (pywebview). Van APARTE del requirements.txt
+# principal a propósito: esta capa está en migración y, sobre todo, pywebview
+# necesita componentes del sistema según la plataforma (en Linux: WebKitGTK +
+# PyGObject; en Windows: WebView2), así que no conviene meterla en el bootstrap
+# de la app Tkinter hasta cerrar la migración.
+#
+#   <python> -m pip install -r requirements-web.txt
+#
+pywebview>=5.0
+markdown>=3.5

@@ -670,6 +670,12 @@ class AgenteUI(BASE_TK):
         self.MAX_AUTO = 5
         self._auto_restantes = {}
         self.conversaciones = []
+        # Modelo de filas de la lista de conversaciones: cada fila del Listbox es
+        # ("conv", entrada) o ("group",) (el encabezado colapsable del enjambre).
+        # Las conversaciones de crew (agentes de un enjambre) se agrupan bajo ese
+        # encabezado para no ensuciar la pantalla principal.
+        self._filas_lista = []
+        self._enjambre_abierto = False
         self.proyectos = []
         self.agente_actual = None     # AgenteInteractivo corriendo, si hay
         self.ocupado_proyecto = False
@@ -1039,11 +1045,7 @@ class AgenteUI(BASE_TK):
         self._titulo_provisorio = ruta
         self.refrescar_conversaciones()
         self._cargar_conversacion(ruta)
-        for i, c in enumerate(self.conversaciones):
-            if c["path"] == ruta:
-                self.lista_conversaciones.selection_clear(0, "end")
-                self.lista_conversaciones.selection_set(i)
-                break
+        self._seleccionar_fila_por_path(ruta)
         self.entrada.focus_set()
 
     def _al_enter(self, _evento):
@@ -1133,22 +1135,67 @@ class AgenteUI(BASE_TK):
         if proveedor is None:
             self.pestanas.select(self.tab_config)
 
+    def _es_crew(self, entrada) -> bool:
+        """Una conversación de enjambre: las crea el crew como 'crew · <agente>'
+        (slug 'crew-...'). Se agrupan aparte en la lista."""
+        try:
+            if entrada["path"].name.startswith("crew-"):
+                return True
+        except Exception:
+            pass
+        return str(entrada.get("titulo", "")).lower().startswith("crew")
+
+    def _linea_conversacion(self, c, indent: str = " ") -> str:
+        marca = "⏳ " if c["path"] in self.ocupadas else ""
+        # El gasto va al final de cada línea; sin precios cargados no se inventa
+        # un número, se muestra la cantidad de tokens.
+        if c.get("costo"):
+            # '~' = estimado a partir de los tokens (conversación anterior a que
+            # la app registrara el costo turno a turno).
+            aprox = "~" if c.get("costo_estimado") else ""
+            gasto = f"  ·  {aprox}{formato.money(c['costo'])}"
+        else:
+            gasto = ""
+        return f"{indent}{marca}{c['titulo']}  ({c['mensajes']}){gasto}"
+
+    def _seleccionar_fila_por_path(self, ruta) -> bool:
+        """Marca en el Listbox la fila de esa conversación, si está visible.
+        Devuelve False si no hay fila (p. ej. está dentro del grupo colapsado)."""
+        for i, fila in enumerate(self._filas_lista):
+            if fila[0] == "conv" and fila[1]["path"] == ruta:
+                self.lista_conversaciones.selection_clear(0, "end")
+                self.lista_conversaciones.selection_set(i)
+                self.lista_conversaciones.see(i)
+                return True
+        return False
+
     def refrescar_conversaciones(self):
         self.conversaciones = self.gestor_conversaciones.listar_conversaciones()
         self.lista_conversaciones.delete(0, "end")
-        for c in self.conversaciones:
-            marca = "⏳ " if c["path"] in self.ocupadas else ""
-            # El gasto va al final de cada línea; sin precios cargados no se
-            # inventa un número, se muestra la cantidad de tokens.
-            if c.get("costo"):
-                # '~' = estimado a partir de los tokens, porque esa conversación
-                # es anterior a que la app registrara el costo turno a turno.
-                aprox = "~" if c.get("costo_estimado") else ""
-                gasto = f"  ·  {aprox}{formato.money(c['costo'])}"
-            else:
-                gasto = ""
+        self._filas_lista = []
+
+        normales = [c for c in self.conversaciones if not self._es_crew(c)]
+        enjambre = [c for c in self.conversaciones if self._es_crew(c)]
+
+        for c in normales:
+            self._filas_lista.append(("conv", c))
+            self.lista_conversaciones.insert("end", self._linea_conversacion(c))
+
+        # Las conversaciones del enjambre van agrupadas bajo un encabezado con
+        # un '+' (colapsado) / '−' (abierto): un clic lo abre o lo cierra.
+        if enjambre:
+            signo = "➖" if self._enjambre_abierto else "➕"
+            corriendo = sum(1 for c in enjambre if c["path"] in self.ocupadas)
+            viva = "  ⏳" if corriendo else ""
+            self._filas_lista.append(("group",))
             self.lista_conversaciones.insert(
-                "end", f" {marca}{c['titulo']}  ({c['mensajes']}){gasto}")
+                "end", f" {signo} 🤝 Enjambre  ({len(enjambre)}){viva}")
+            if self._enjambre_abierto:
+                for c in enjambre:
+                    self._filas_lista.append(("conv", c))
+                    self.lista_conversaciones.insert(
+                        "end", self._linea_conversacion(c, indent="      ↳ "))
+
         # Suma de todo lo gastado, sobre todas las conversaciones.
         tokens = sum(c.get("tokens", 0) for c in self.conversaciones)
         total = sum(c.get("costo", 0.0) for c in self.conversaciones)
@@ -1169,19 +1216,24 @@ class AgenteUI(BASE_TK):
             return
         conversacion_dir = self.gestor_conversaciones.crear_conversacion(titulo.strip())
         self.refrescar_conversaciones()
-        for i, c in enumerate(self.conversaciones):
-            if c["path"] == conversacion_dir:
-                self.lista_conversaciones.selection_clear(0, "end")
-                self.lista_conversaciones.selection_set(i)
-                self._cargar_conversacion(conversacion_dir)
-                break
+        if self._seleccionar_fila_por_path(conversacion_dir):
+            self._cargar_conversacion(conversacion_dir)
         self.entrada.focus_set()
 
     def _al_elegir_conversacion(self, _evento):
         seleccion = self.lista_conversaciones.curselection()
         if not seleccion:
             return
-        self._cargar_conversacion(self.conversaciones[seleccion[0]]["path"])
+        idx = seleccion[0]
+        if idx >= len(self._filas_lista):
+            return
+        fila = self._filas_lista[idx]
+        if fila[0] == "group":
+            # Clic en el encabezado del enjambre: abre/cierra el grupo.
+            self._enjambre_abierto = not self._enjambre_abierto
+            self.refrescar_conversaciones()
+            return
+        self._cargar_conversacion(fila[1]["path"])
 
     def _cargar_conversacion(self, conversacion_dir: Path):
         try:
@@ -1293,7 +1345,13 @@ class AgenteUI(BASE_TK):
                                    "Esperá a que termine el turno en curso.")
             return
 
-        c = self.conversaciones[seleccion[0]]
+        idx = seleccion[0]
+        fila = self._filas_lista[idx] if idx < len(self._filas_lista) else None
+        if not fila or fila[0] != "conv":
+            messagebox.showinfo("Borrar conversación",
+                                "Elegí una conversación (no el grupo Enjambre).")
+            return
+        c = fila[1]
         if not messagebox.askokcancel(
             "Borrar conversación",
             f"«{c['titulo']}»\n\n"
@@ -3489,13 +3547,9 @@ class AgenteUI(BASE_TK):
         self.refrescar_biblioteca()
 
         if activa is not None:
-            for i, c in enumerate(self.conversaciones):
-                if c["path"] == activa:
-                    self.lista_conversaciones.selection_clear(0, "end")
-                    self.lista_conversaciones.selection_set(i)
-                    if not self.ocupado_chat:
-                        self._cargar_conversacion(activa)
-                    break
+            self._seleccionar_fila_por_path(activa)   # resalta si está visible
+            if not self.ocupado_chat:
+                self._cargar_conversacion(activa)
 
         self.estado_chat.configure(text="↻ Actualizado")
         self.after(1500, lambda: self.estado_chat.configure(text="")

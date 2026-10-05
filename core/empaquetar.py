@@ -216,14 +216,14 @@ def crear_zip(destino: Path, raiz: Path = None, forzar: bool = False) -> Dict[st
 
 LANZADOR = """#!/bin/bash
 # Lanzador del .app. El código viaja adentro del bundle, en Resources/app, y se
-# despliega a ~/AgenteDeepSeek la primera vez (o cuando la app trae una versión
+# despliega a ~/AgentFactory la primera vez (o cuando la app trae una versión
 # más nueva). Se despliega en vez de correr adentro del bundle para que el
 # runtime de Python, el entorno y el historial de versiones NO queden dentro de
 # la app: así reemplazarla no te borra los 24 MB del intérprete ni tus puntos
 # de retorno.
 RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
 ORIGEN="$RES/app"
-DESTINO="$HOME/AgenteDeepSeek"
+DESTINO="$HOME/AgentFactory"
 
 version_origen="$(cat "$ORIGEN/VERSION" 2>/dev/null)"
 version_destino="$(cat "$DESTINO/VERSION" 2>/dev/null)"
@@ -251,13 +251,13 @@ INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>AgenteDeepSeek</string>
-    <key>CFBundleDisplayName</key><string>AgenteDeepSeek</string>
-    <key>CFBundleIdentifier</key><string>local.agentedeepseek</string>
+    <key>CFBundleName</key><string>AgentFactory</string>
+    <key>CFBundleDisplayName</key><string>AgentFactory</string>
+    <key>CFBundleIdentifier</key><string>local.agentfactory.app</string>
     <key>CFBundleVersion</key><string>{version}</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleShortVersionString</key><string>0.2</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleExecutable</key><string>AgenteDeepSeek</string>
+    <key>CFBundleExecutable</key><string>AgentFactory</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>NSHighResolutionCapable</key><true/>
@@ -302,7 +302,7 @@ def construir_app(destino: Path, raiz: Path = None, icono: Path = None) -> Dict[
     for archivo in archivos:
         relativa = archivo.relative_to(raiz)
         # El .app anterior no se mete adentro del nuevo.
-        if str(relativa).startswith("AgenteDeepSeek.app/"):
+        if str(relativa).startswith(("AgentFactory.app/", "AgenteDeepSeek.app/")):
             continue
         salida = contenido / "Resources" / "app" / relativa
         salida.parent.mkdir(parents=True, exist_ok=True)
@@ -311,12 +311,15 @@ def construir_app(destino: Path, raiz: Path = None, icono: Path = None) -> Dict[
     (contenido / "Resources" / "app" / "VERSION").write_text(version, encoding="utf-8")
     (contenido / "Resources" / "app" / "LEEME.md").write_text(LEEME, encoding="utf-8")
 
-    icono = Path(icono) if icono else (raiz / "AgenteDeepSeek.app" / "Contents" /
-                                       "Resources" / "AppIcon.icns")
+    icono = Path(icono) if icono else (raiz / "AppIcon.icns")
+    if not icono.exists():
+        alt = raiz / "AgentFactory.app" / "Contents" / "Resources" / "AppIcon.icns"
+        if alt.exists():
+            icono = alt
     if icono.exists():
         shutil.copy2(icono, contenido / "Resources" / "AppIcon.icns")
 
-    lanzador = contenido / "MacOS" / "AgenteDeepSeek"
+    lanzador = contenido / "MacOS" / "AgentFactory"
     lanzador.write_text(LANZADOR, encoding="utf-8")
     lanzador.chmod(0o755)
     (contenido / "Info.plist").write_text(INFO_PLIST.format(version=version), encoding="utf-8")
@@ -340,7 +343,7 @@ def construir_dmg(destino: Path, app: Path) -> Dict[str, Any]:
         return {"error": f"No encuentro la app en {app}"}
 
     with tempfile.TemporaryDirectory() as tmp:
-        escena = Path(tmp) / "AgenteDeepSeek"
+        escena = Path(tmp) / "AgentFactory"
         escena.mkdir()
         subprocess.run(["/usr/bin/ditto", str(app), str(escena / app.name)], check=True)
         # El atajo a /Applications es lo que hace obvio el "arrastrá acá".
@@ -350,7 +353,7 @@ def construir_dmg(destino: Path, app: Path) -> Dict[str, Any]:
         if destino.exists():
             destino.unlink()
         proceso = subprocess.run(
-            ["/usr/bin/hdiutil", "create", "-volname", "AgenteDeepSeek",
+            ["/usr/bin/hdiutil", "create", "-volname", "AgentFactory",
              "-srcfolder", str(escena), "-ov", "-format", "UDZO", str(destino)],
             capture_output=True, text=True)
         if proceso.returncode != 0:

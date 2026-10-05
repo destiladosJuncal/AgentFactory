@@ -33,6 +33,10 @@ class Puente:
         self.gestor = GestorConversaciones()
         self._chats: Dict[str, ConversacionChat] = {}
         self.window = None            # se setea después de create_window
+        self._room = None             # enjambre activo
+        self._enjambre_cancelado = False
+        self._proxy = None            # captura (mitmproxy)
+        self._almacen = None
 
     # -- JS helper ----------------------------------------------------------
 
@@ -181,3 +185,102 @@ class Puente:
             return config.probar((proveedor or "").strip())
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # -- enjambre (multi-agente) -------------------------------------------
+
+    def _emitir_msg(self, m):
+        self._js("enjambreMensaje",
+                 {"speaker": m.speaker, "text": m.text, "audience": m.audience})
+
+    def enjambre_iniciar(self, tarea: str, max_agents: int = 4,
+                         con_tools: bool = False) -> Dict[str, Any]:
+        tarea = (tarea or "").strip()
+        if not tarea:
+            return {"ok": False}
+        self._enjambre_cancelado = False
+        self._room = None
+        threading.Thread(target=self._worker_enjambre_kickoff,
+                         args=(tarea, int(max_agents), bool(con_tools)),
+                         daemon=True).start()
+        return {"ok": True}
+
+    def _worker_enjambre_kickoff(self, tarea, maxi, con_tools):
+        try:
+            from core import crew as crewmod
+            self._js("enjambreEstado", "🧠 Planificando equipo…")
+            specs = crewmod.plan_team(tarea, max_agents=maxi)
+            self._js("enjambreEquipo",
+                     [{"name": s.name, "role": s.role, "goal": s.goal} for s in specs])
+            agentes = crewmod.build_crew(specs, tools_enabled=con_tools).agents
+            self._room = crewmod.Room(agentes)
+            self._room.kickoff(tarea, progress=self._emitir_msg,
+                               should_stop=lambda: self._enjambre_cancelado)
+            self._js("enjambreFin")
+        except Exception:
+            self._js("enjambreError", traceback.format_exc())
+
+    def enjambre_mensaje(self, texto: str) -> Dict[str, Any]:
+        if self._room is None:
+            return {"ok": False}
+        self._enjambre_cancelado = False
+        threading.Thread(target=self._worker_enjambre_msg, args=(texto,),
+                         daemon=True).start()
+        return {"ok": True}
+
+    def _worker_enjambre_msg(self, texto):
+        try:
+            self._room.user_message(texto, progress=self._emitir_msg,
+                                    should_stop=lambda: self._enjambre_cancelado)
+            self._js("enjambreFin")
+        except Exception:
+            self._js("enjambreError", traceback.format_exc())
+
+    def enjambre_detener(self) -> Dict[str, Any]:
+        self._enjambre_cancelado = True
+        if self._room is not None:
+            for a in self._room.agents:
+                try:
+                    a.cancel()
+                except Exception:
+                    pass
+        return {"ok": True}
+
+    # -- captura (proxy + Firefox) -----------------------------------------
+
+    def abrir_firefox(self) -> Dict[str, Any]:
+        """Arranca el proxy (si no está) y abre el Firefox de captura. Un clic
+        hace todo, igual que en la app de escritorio."""
+        from core import proxy as proxymod
+        try:
+            import mitmproxy  # noqa: F401
+        except ImportError:
+            return {"ok": False, "error":
+                    "mitmproxy no está instalado. Instalalo con: pip install mitmproxy"}
+        try:
+            puerto = proxymod.PUERTO_DEFAULT
+            if self._proxy is None or not getattr(self._proxy, "corriendo", False):
+                if self._almacen is None:
+                    self._almacen = proxymod.Almacen(proxymod.dir_proxy() / "sesion.db")
+                self._proxy = proxymod.Proxy(self._almacen, puerto=puerto,
+                                             al_flujo=lambda i: None)
+                err = self._proxy.iniciar()
+                if err:
+                    self._proxy = None
+                    return {"ok": False, "error": f"no pude iniciar el proxy: {err}"}
+            r = proxymod.lanzar_firefox(puerto)
+            if isinstance(r, dict) and r.get("error"):
+                return {"ok": False, "error": r["error"]}
+            return {"ok": True, "puerto": puerto}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def captura_estado(self) -> Dict[str, Any]:
+        from core import proxy_tool, formato
+        b = proxy_tool.tamano_captura()
+        corriendo = bool(self._proxy is not None and getattr(self._proxy, "corriendo", False))
+        return {"bytes": b, "texto": formato.size(b) if b else "vacía",
+                "corriendo": corriendo}
+
+    def vaciar_captura(self) -> Dict[str, Any]:
+        from core import proxy_tool
+        return proxy_tool.vaciar_captura()

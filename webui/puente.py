@@ -152,6 +152,32 @@ class Puente:
         except Exception:
             self._js("chatError", traceback.format_exc())
 
+    # -- ejecutar código del chat ------------------------------------------
+
+    def ejecutar_codigo(self, codigo: str, lenguaje: str = "",
+                        confirmado: bool = False) -> Dict[str, Any]:
+        """Corre un bloque de código del chat. Mantiene el guard de seguridad:
+        si el código toca/borra archivos o lee credenciales, NO corre hasta que
+        la persona confirme (necesita_confirmacion → el front muestra el aviso y
+        vuelve a llamar con confirmado=True)."""
+        from core import ejecucion
+        es_py = (lenguaje or "").lower() in ("python", "py", "python3")
+        riesgos = ejecucion.analizar_riesgo(codigo or "", es_python=es_py)
+        if riesgos and not confirmado:
+            return {"necesita_confirmacion": True,
+                    "riesgos": [expl for _, expl in riesgos]}
+        anterior = ejecucion.CONFIRMADOR
+        if riesgos:
+            # Ya lo aprobó en la UI: permitir esta corrida.
+            ejecucion.CONFIRMADOR = lambda resumen, detalle, clave: "permitir"
+        try:
+            r = ejecucion.ejecutar_python(codigo) if es_py else ejecucion.ejecutar_shell(codigo)
+        except Exception as e:
+            r = {"stderr": str(e), "codigo_retorno": -1}
+        finally:
+            ejecucion.CONFIRMADOR = anterior
+        return {"ok": True, "resultado": r}
+
     # -- configuración ------------------------------------------------------
 
     def config_campos(self) -> List[Dict[str, Any]]:

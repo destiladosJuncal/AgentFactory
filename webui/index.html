@@ -82,7 +82,21 @@
   .cp { position:absolute; top:6px; right:6px; font-size:12px; border:0; border-radius:6px;
         padding:3px 9px; cursor:pointer; background:#2b3140; color:#e7eaf1;
         opacity:0; transition:opacity .15s; }
+  .cp.run { right:74px; background:#0f7b4f; }
   .burbuja pre:hover .cp { opacity:1; }
+  .runout { max-width:820px; margin:-6px auto 14px; background:#12151c; color:#cfe3d8;
+            border-radius:0 0 8px 8px; padding:10px 12px; font:12px Menlo,monospace;
+            white-space:pre-wrap; word-break:break-word; }
+  /* modal de confirmación */
+  .modal-ov { position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex;
+              align-items:center; justify-content:center; z-index:50; }
+  .modal { background:#fff; border-radius:12px; padding:20px 24px; max-width:460px; }
+  .modal h3 { margin:0 0 8px; }
+  .modal ul { color:var(--error); }
+  .mbtn { display:flex; justify-content:flex-end; gap:10px; margin-top:16px; }
+  .mbtn button { border:0; border-radius:8px; padding:8px 16px; cursor:pointer; }
+  .mbtn .mno { background:var(--panel); }
+  .mbtn .msi { background:var(--error); color:#fff; }
   #barra { border-top:1px solid var(--borde); padding:12px 26px; display:flex; gap:10px; align-items:flex-end; }
   #entrada { flex:1; resize:none; font:15px -apple-system,sans-serif; border:1px solid #c8ccd4;
              border-radius:10px; padding:10px 12px; max-height:160px; }
@@ -423,17 +437,57 @@
     pintarMensaje("assistant", `<pre style="color:#ff8a8a">${escapar(txt)}</pre>`);
     burbujaAgente = null; $("#enviar").disabled = false; alFondo();
   }
+  const LANG_EJECUTABLE = {python:1, py:1, python3:1, bash:1, sh:1, shell:1, zsh:1};
+  function langDe(pre){
+    const code = pre.querySelector("code");
+    const m = code && (code.className||"").match(/language-([\w]+)/);
+    return m ? m[1].toLowerCase() : "";
+  }
   function mejorarCodigo() {
     for (const pre of trans().querySelectorAll("pre")) {
-      if (pre.querySelector(".cp")) continue;
-      const b = document.createElement("button"); b.className = "cp"; b.textContent = "Copiar";
-      b.onclick = () => {
-        const code = pre.querySelector("code") || pre;
-        navigator.clipboard.writeText(code.innerText);
-        b.textContent = "✓ Copiado"; setTimeout(() => b.textContent = "Copiar", 1200);
-      };
-      pre.appendChild(b);
+      if (pre.dataset.mejorado) continue;
+      pre.dataset.mejorado = "1";
+      const code = pre.querySelector("code") || pre;
+      const lang = langDe(pre);
+      const bc = document.createElement("button"); bc.className = "cp"; bc.textContent = "Copiar";
+      bc.onclick = () => { navigator.clipboard.writeText(code.innerText);
+        bc.textContent = "✓ Copiado"; setTimeout(() => bc.textContent = "Copiar", 1200); };
+      pre.appendChild(bc);
+      if (LANG_EJECUTABLE[lang]) {
+        const be = document.createElement("button"); be.className = "cp run"; be.textContent = "▶ Ejecutar";
+        be.onclick = () => ejecutarBloque(pre, code.innerText, lang);
+        pre.appendChild(be);
+      }
     }
+  }
+  async function ejecutarBloque(pre, codigo, lang){
+    let out = pre.nextElementSibling;
+    if (!out || !out.classList.contains("runout")) {
+      out = document.createElement("div"); out.className = "runout"; pre.after(out);
+    }
+    out.textContent = "⏳ ejecutando…";
+    let r = await window.pywebview.api.ejecutar_codigo(codigo, lang, false);
+    if (r && r.necesita_confirmacion) {
+      const ok = await confirmarRiesgo(r.riesgos || []);
+      if (!ok) { out.textContent = "cancelado"; return; }
+      r = await window.pywebview.api.ejecutar_codigo(codigo, lang, true);
+    }
+    const res = (r && r.resultado) || {};
+    let txt = res.stdout || "";
+    if (res.stderr) txt += (txt ? "\n" : "") + res.stderr;
+    if (res.truncado) txt += "\n…(salida truncada)";
+    out.textContent = txt || ("(sin salida · código " + (res.codigo_retorno ?? "?") + ")");
+  }
+  function confirmarRiesgo(riesgos){
+    return new Promise(res => {
+      const ov = document.createElement("div"); ov.className = "modal-ov";
+      ov.innerHTML = `<div class="modal"><h3>⚠️ Operación sensible</h3>`
+        + `<p>Este código puede:</p><ul>${riesgos.map(r=>`<li>${escapar(r)}</li>`).join("")}</ul>`
+        + `<div class="mbtn"><button class="mno">Cancelar</button><button class="msi">Ejecutar igual</button></div></div>`;
+      document.body.appendChild(ov);
+      ov.querySelector(".mno").onclick = () => { ov.remove(); res(false); };
+      ov.querySelector(".msi").onclick = () => { ov.remove(); res(true); };
+    });
   }
 
   // ===================== CONFIG =====================

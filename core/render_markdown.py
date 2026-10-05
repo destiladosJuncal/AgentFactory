@@ -282,8 +282,27 @@ def _render_tabla(texto, filas: List[List[str]]):
         texto.insert("end", "\n")
 
 
+def _solo_lectura(w):
+    """Hace un tk.Text de solo lectura PERO manteniendo la selección y el copiar.
+    No se usa `state="disabled"` porque eso desactiva la selección con el mouse."""
+    def bloquear(e):
+        # Permitir copiar y seleccionar-todo (con cualquier modificador) y navegar.
+        if e.keysym.lower() in ("c", "a") and e.state & 0x1C:   # Ctrl/Cmd/Alt
+            return None
+        if e.keysym in ("Left", "Right", "Up", "Down", "Home", "End",
+                        "Prior", "Next", "Shift_L", "Shift_R", "Control_L",
+                        "Control_R", "Meta_L", "Meta_R", "Alt_L", "Alt_R"):
+            return None
+        return "break"
+    w.bind("<Key>", bloquear)
+    w.bind("<<Paste>>", lambda e: "break")
+    w.bind("<<Cut>>", lambda e: "break")
+    w.bind("<Button-2>", lambda e: "break")
+
+
 def _render_tabla_widget(texto, filas: List[List[str]]):
     import tkinter as tk
+    import tkinter.font as tkfont
 
     columnas = max(len(f) for f in filas)
     filas = [f + [""] * (columnas - len(f)) for f in filas]
@@ -300,6 +319,9 @@ def _render_tabla_widget(texto, filas: List[List[str]]):
     except Exception:
         fondo_cab = "#f4f5f7"
     fuente_ui = plataforma.fuentes()[0]
+    f_normal = (fuente_ui, 11)
+    f_cab = (fuente_ui, 11, "bold")
+    por_caracter = tkfont.Font(font=f_normal).measure("0") or 8
 
     # Ancho disponible en píxeles, y reparto por columna según el contenido.
     ancho_px = texto.winfo_width()
@@ -308,26 +330,32 @@ def _render_tabla_widget(texto, filas: List[List[str]]):
     disponible = max(320, ancho_px - 70)             # margen del Text + sangría
     naturales = [max(1, max(_ancho_visual(f[i]) for f in filas)) for i in range(columnas)]
     total = sum(naturales) or 1
-    # wraplength por columna (en px), con un mínimo para que no quede una columna
-    # de un carácter de ancho.
+    # Ancho de cada columna en píxeles y en caracteres (para el width del Text).
     wrap = [max(70, int(disponible * n / total)) for n in naturales]
+    cols_chars = [max(6, int(w / por_caracter)) for w in wrap]
 
     # El marco pintado del color del borde + 1px de separación entre celdas hace
     # las líneas de la grilla (truco clásico, equivale a border-collapse en CSS).
     marco = tk.Frame(texto, bg=borde, bd=0)
-    for c in range(columnas):
-        marco.grid_columnconfigure(c, weight=naturales[c])
 
     for r, fila in enumerate(filas):
         encabezado = (r == 0)
         for c, celda in enumerate(fila):
-            lbl = tk.Label(
-                marco, text=celda, justify="left", anchor="nw",
-                wraplength=wrap[c],
+            cel = tk.Text(
+                marco, wrap="word", width=cols_chars[c], height=1,
                 bg=(fondo_cab if encabezado else fondo), fg=fg,
-                font=(fuente_ui, 11, "bold") if encabezado else (fuente_ui, 11),
-                padx=8, pady=5)
-            lbl.grid(row=r, column=c, sticky="nsew",
+                font=f_cab if encabezado else f_normal,
+                relief="flat", bd=0, highlightthickness=0, padx=8, pady=5,
+                cursor="xterm")
+            cel.insert("1.0", celda)
+            # Alto según cuántas líneas ocupa el texto envuelto al ancho de la
+            # columna. Se calcula sin depender de que el widget esté dibujado
+            # (medir 'displaylines' sin mapear devuelve basura).
+            lineas = sum(max(1, len(_cortar_celda(parrafo, cols_chars[c])))
+                         for parrafo in (celda.split("\n") or [""]))
+            cel.configure(height=max(1, lineas))
+            _solo_lectura(cel)
+            cel.grid(row=r, column=c, sticky="nsew",
                      padx=(1, 0) if c else (1, 1), pady=(1, 0) if r else (1, 1))
 
     texto.window_create("end", window=marco)

@@ -163,7 +163,7 @@ def _celdas(linea: str) -> List[str]:
 
 ANCHO_TABLA_FALLBACK = 96      # caracteres, si no se puede medir el widget
 MIN_COLUMNA = 6
-MAX_COLUMNA_NATURAL = 46
+MAX_COLUMNA_NATURAL = 52
 
 
 def _ancho_visual(s: str) -> int:
@@ -239,7 +239,10 @@ def _repartir_columnas(filas: List[List[str]], disponible: int) -> List[int]:
         min(MAX_COLUMNA_NATURAL, max(_ancho_visual(f[i]) for f in filas))
         for i in range(columnas)
     ]
-    separadores = 2 * (columnas - 1) + 2
+    # Overhead del dibujo con bordes: '│ ' antes de cada celda, ' ' al final de
+    # cada una, y el '│' de cierre. Son 3 caracteres por columna más el borde
+    # final: hay que reservarlos para que la tabla ENTRE en el ancho.
+    separadores = 3 * columnas + 1
     sobrante = disponible - separadores
 
     if sum(naturales) <= sobrante:
@@ -260,26 +263,47 @@ def _repartir_columnas(filas: List[List[str]], disponible: int) -> List[int]:
 
 
 def _render_tabla(texto, filas: List[List[str]]):
-    """Dibuja la tabla como grilla de caracteres, envolviendo dentro de cada
-    celda para que la fila nunca supere el ancho del widget."""
+    """Dibuja la tabla con bordes y separadores verticales.
+
+    Antes las columnas se separaban con dos espacios y nada más: cuando una celda
+    tenía mucho texto y se partía en varias líneas, las continuaciones quedaban
+    flotando sin saber a qué columna pertenecían. Con los '│' entre columnas la
+    alineación se lee aun cuando las celdas envuelven, y si alguna fila ocupa
+    varias líneas se agrega una regla entre filas para delimitarlas."""
+    SANGRIA = "  "
     columnas = max(len(f) for f in filas)
     filas = [f + [""] * (columnas - len(f)) for f in filas]
     anchos = _repartir_columnas(filas, _ancho_disponible(texto))
+
+    def borde(izq, med, der):
+        return SANGRIA + izq + med.join("─" * (a + 2) for a in anchos) + der
 
     def emitir(celdas, tag):
         # Cada celda puede ocupar varias líneas; la fila mide lo que la más alta.
         partidas = [_cortar_celda(c, anchos[i]) for i, c in enumerate(celdas)]
         alto = max(len(p) for p in partidas)
         for n in range(alto):
-            linea = "  ".join(
-                _rellenar(partidas[i][n] if n < len(partidas[i]) else "", anchos[i])
+            cuerpo = "│".join(
+                " " + _rellenar(partidas[i][n] if n < len(partidas[i]) else "", anchos[i]) + " "
                 for i in range(columnas))
-            texto.insert("end", "  " + linea.rstrip() + "\n", tag)
+            texto.insert("end", SANGRIA + "│" + cuerpo + "│\n", tag)
+        return alto
 
+    # ¿Alguna celda se parte en más de una línea? Si sí, conviene separar fila a
+    # fila; si no, la tabla es compacta y las reglas intermedias solo estorban.
+    def altura(fila):
+        return max(len(_cortar_celda(c, anchos[i])) for i, c in enumerate(fila))
+    multilinea = any(altura(f) > 1 for f in filas)
+
+    texto.insert("end", borde("┌", "┬", "┐") + "\n", "md_regla")
     emitir(filas[0], "md_tabla_encabezado")
-    texto.insert("end", "  " + "  ".join("─" * a for a in anchos) + "\n", "md_regla")
-    for fila in filas[1:]:
+    texto.insert("end", borde("├", "┼", "┤") + "\n", "md_regla")
+    cuerpo = filas[1:]
+    for i, fila in enumerate(cuerpo):
         emitir(fila, "md_tabla")
+        if multilinea and i < len(cuerpo) - 1:
+            texto.insert("end", borde("├", "┼", "┤") + "\n", "md_regla")
+    texto.insert("end", borde("└", "┴", "┘") + "\n", "md_regla")
     texto.insert("end", "\n")
 
 

@@ -113,3 +113,37 @@ class Puente:
             self._js("chatFinRespuesta", md_a_html(respuesta))
         except Exception:
             self._js("chatError", traceback.format_exc())
+
+    # -- configuración ------------------------------------------------------
+
+    def config_campos(self) -> List[Dict[str, Any]]:
+        """Los campos editables del .env, con los secretos enmascarados."""
+        from core import config
+        valores = config.leer()
+        campos = []
+        for clave, etiqueta, secreto in config.CAMPOS:
+            v = valores.get(clave, "")
+            campos.append({
+                "clave": clave, "etiqueta": etiqueta, "secreto": bool(secreto),
+                "valor": config.enmascarar(v) if secreto else v,
+                "tiene": bool(v),
+            })
+        return campos
+
+    def guardar_config(self, cambios: Dict[str, str]) -> Dict[str, Any]:
+        """Guarda SOLO los campos que mandó el front (los que el usuario tocó),
+        preservando el resto del .env."""
+        from core import config
+        try:
+            config.guardar({k: v for k, v in (cambios or {}).items()})
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def probar_proveedor(self, proveedor: str) -> Dict[str, Any]:
+        """Hace una llamada real al proveedor para confirmar que la key sirve."""
+        from core import config
+        try:
+            return config.probar((proveedor or "").strip())
+        except Exception as e:
+            return {"ok": False, "error": str(e)}

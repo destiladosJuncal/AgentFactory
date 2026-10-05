@@ -49,6 +49,7 @@ else:
 # ensuciárselo a la persona.
 PY_APP = None
 REQUISITOS = APP_DIR / "requirements.txt"
+REQUISITOS_WEB = APP_DIR / "requirements-web.txt"
 
 # Versión mínima. No es 3.9 por capricho: mitmproxy 12 (la captura de tráfico)
 # pide 3.12+, así que aceptar un 3.10 del sistema pasa este control y después
@@ -172,6 +173,39 @@ def instalar_dependencias():
     log("✅ Dependencias listas", VERDE)
 
 
+def _ui_pedida() -> str:
+    """Qué interfaz abrir. Default: la nueva (web). AGENTE_UI=tk vuelve a Tkinter."""
+    pedido = os.environ.get("AGENTE_UI", "").strip().lower()
+    return "tk" if pedido in ("tk", "tkinter", "escritorio", "desktop") else "web"
+
+
+def instalar_web() -> bool:
+    """Instala las dependencias de la UI web (requirements-web.txt). Devuelve
+    True si quedaron listas. A diferencia de las principales, un fallo acá NO mata
+    el arranque: se cae a la UI de escritorio (pywebview necesita componentes del
+    sistema en Linux/Windows y puede no estar)."""
+    if not REQUISITOS_WEB.exists():
+        return False
+    esperado = hashlib.sha256(REQUISITOS_WEB.read_bytes()).hexdigest()[:16]
+    base = RUNTIME_DIR if usando_runtime_propio() else VENV_DIR
+    marca = base / ".requisitos-web-instalados"
+    if marca.exists() and marca.read_text(encoding="utf-8").strip() == esperado:
+        return True
+    log("📦 Instalando dependencias de la UI web…", AZUL)
+    entorno = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    try:
+        subprocess.run([str(PY_APP), "-m", "pip", "install", "-r", str(REQUISITOS_WEB)],
+                       check=True, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=entorno)
+    except subprocess.CalledProcessError:
+        log("⚠️  No pude instalar la UI web; abro la de escritorio.", AMARILLO)
+        return False
+    marca.parent.mkdir(parents=True, exist_ok=True)
+    marca.write_text(esperado, encoding="utf-8")
+    log("✅ UI web lista", VERDE)
+    return True
+
+
 def verificar():
     """Que la interfaz pueda abrir de verdad, antes de intentar lanzarla."""
     prueba = subprocess.run(
@@ -268,9 +302,15 @@ def main():
     instalar_dependencias()
     verificar()
 
+    # Default: la UI web nueva; AGENTE_UI=tk vuelve a la de escritorio. Si las
+    # deps web no se pueden instalar, cae a Tkinter sin romper.
+    destino = APP_DIR / "main_ui.py"
+    if _ui_pedida() == "web" and (APP_DIR / "main_web.py").exists() and instalar_web():
+        destino = APP_DIR / "main_web.py"
+
     log("")
     log("🚀 Abriendo…", VERDE)
-    lanzar(APP_DIR / "main_ui.py")
+    lanzar(destino)
 
 
 if __name__ == "__main__":

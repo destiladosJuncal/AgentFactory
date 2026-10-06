@@ -110,7 +110,19 @@ class Puente:
         return d.name
 
     def arte_bienvenida(self) -> Dict[str, Any]:
-        """El logo ASCII de arranque (core/bienvenida.py)."""
+        """El logo de arranque. En la web se usa el PNG de la marca (queda mejor
+        que el ASCII); si no está, se cae al logo ASCII de core/bienvenida.py."""
+        import base64
+        from core.rutas import dir_app
+        raiz = dir_app()
+        for nombre in ("agentfactory-icon-1024.png", "agentfactory-icon.png", "icono.png"):
+            p = raiz / nombre
+            if p.exists():
+                try:
+                    b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                    return {"img": f"data:image/png;base64,{b64}"}
+                except Exception:
+                    pass
         from core import bienvenida
         return {"logo": bienvenida.LOGO.strip("\n")}
 

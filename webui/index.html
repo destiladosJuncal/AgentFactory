@@ -112,9 +112,12 @@
             background:var(--usuario); color:#fff; font-size:14px; }
   #enviar:disabled { opacity:.5; cursor:default; }
   .vacio { color:var(--tenue); text-align:center; margin-top:40px; }
+  .bienv { text-align:center; margin-top:9vh; }
+  .arte-img { width:132px; height:132px; object-fit:contain; }
+  .arte-title { font-size:20px; font-weight:700; margin-top:12px; color:var(--texto); }
   .arte { font:11px/1.15 Menlo,monospace; color:var(--tenue); white-space:pre;
-          text-align:center; margin:34px auto 6px; }
-  .arte-hint { text-align:center; color:var(--tenue); }
+          text-align:center; margin:0 auto 6px; }
+  .arte-hint { text-align:center; color:var(--tenue); margin-top:6px; }
 
   /* --- enjambre --- */
   #enjambre-main { flex:1; display:flex; flex-direction:column; min-width:0; }
@@ -516,15 +519,19 @@
     div.innerHTML = `<div class="quien">${rol === "user" ? "🧑 Vos" : "● Agente"}</div><div class="burbuja">${html}</div>`;
     trans().appendChild(div); return div;
   }
-  let logoCache = null;
+  let bienvCache = null;
   async function mostrarBienvenida(){
-    if (logoCache === null){
-      try { const r = await window.pywebview.api.arte_bienvenida(); logoCache = r.logo || ""; }
-      catch(e){ logoCache = ""; }
+    if (bienvCache === null){
+      try { bienvCache = await window.pywebview.api.arte_bienvenida(); }
+      catch(e){ bienvCache = {}; }
     }
     $("#chat-cab").style.display = "none";
-    trans().innerHTML = `<pre class="arte">${escapar(logoCache)}</pre>`
-      + `<p class="arte-hint">Escribí abajo para empezar — te creo la conversación sola.</p>`;
+    const visual = bienvCache.img
+      ? `<img class="arte-img" src="${bienvCache.img}">`
+      : `<pre class="arte">${escapar(bienvCache.logo || "")}</pre>`;
+    trans().innerHTML = `<div class="bienv">${visual}`
+      + `<div class="arte-title">AgentFactory</div>`
+      + `<p class="arte-hint">Escribí abajo para empezar — te creo la conversación sola.</p></div>`;
   }
   async function enviar() {
     const ta = $("#entrada"); const texto = ta.value.trim();

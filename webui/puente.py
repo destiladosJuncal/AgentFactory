@@ -197,17 +197,18 @@ class Puente:
         except Exception:
             self._js("chatError", traceback.format_exc())
             return
-        # Eco del mensaje del usuario + apertura de la burbuja del agente.
-        self._js("chatUsuario", md_a_html(texto))
-        self._js("chatInicioRespuesta")
+        # Todos los eventos llevan el nombre de la conversación, para que el front
+        # pinte cada stream en SU conversación (y no en la que estés mirando) y
+        # para que Enviar/Detener reflejen el estado de cada una por separado.
+        self._js("chatUsuario", nombre, md_a_html(texto))
+        self._js("chatInicioRespuesta", nombre)
         try:
-            chat.enviar(texto, al_fragmento=lambda t: self._js("chatFragmento", t))
-            # Al terminar se recarga toda la conversación: así aparecen las
-            # ejecuciones (shell, biblioteca, paquetes…) que ocurrieron en el
-            # medio, no solo el texto final.
+            chat.enviar(texto, al_fragmento=lambda t: self._js("chatFragmento", nombre, t))
+            # Al terminar se recarga la conversación: así aparecen las ejecuciones
+            # (shell, biblioteca, paquetes…) además del texto final.
             self._js("chatFin", nombre)
         except Exception:
-            self._js("chatError", traceback.format_exc())
+            self._js("chatError", nombre, traceback.format_exc())
 
     # -- ejecutar código del chat ------------------------------------------
 

@@ -402,15 +402,26 @@
 
   // ===================== CHAT =====================
   let convActual = null, burbujaAgente = null, bufferStream = "", enjambreAbierto = false;
+  const corriendo = new Set();            // conversaciones con un turno en curso
   const trans = () => $("#trans");
   function alFondo() { const t = trans(); t.scrollTop = t.scrollHeight; }
+  function actualizarBarra(){
+    // Enviar/Detener reflejan el estado de LA conversación que estás mirando.
+    const activo = !!(convActual && corriendo.has(convActual));
+    $("#enviar").disabled = activo;
+    const det = $("#chat-detener");
+    det.style.display = activo ? "" : "none";
+    if (activo && det.textContent === "deteniendo…") { /* conservar */ }
+    else det.textContent = "⏹ Detener";
+  }
 
   function filaConv(c, hijo) {
     const div = document.createElement("div");
     div.className = "conv" + (hijo ? " hijo" : "") + (c.nombre === convActual ? " sel" : "");
     div.onclick = () => abrirConversacion(c.nombre);
     const icono = (c.crew && !hijo) ? "🤝 " : "";
-    div.innerHTML = `<div>${icono}${escapar(c.titulo)}</div><div class="n">${c.mensajes} mensaje(s)</div>`;
+    const run = corriendo.has(c.nombre) ? "⏳ " : "";
+    div.innerHTML = `<div>${run}${icono}${escapar(c.titulo)}</div><div class="n">${c.mensajes} mensaje(s)</div>`;
     return div;
   }
   async function refrescarLista() {
@@ -436,8 +447,9 @@
     $("#chat-cab").style.display = "flex";
     $("#chat-titulo").textContent = data.titulo;
     const t = trans(); t.innerHTML = "";
+    burbujaAgente = null;
     for (const it of data.mensajes) pintarItem(it);
-    mejorarCodigo(); alFondo(); refrescarLista(); $("#entrada").focus();
+    mejorarCodigo(); alFondo(); refrescarLista(); actualizarBarra(); $("#entrada").focus();
   }
   async function nuevaConversacion() {
     const nombre = await window.pywebview.api.nueva_conversacion("");
@@ -536,37 +548,46 @@
   async function enviar() {
     const ta = $("#entrada"); const texto = ta.value.trim();
     if (!texto) return;
-    ta.value = ""; ta.style.height = "auto"; $("#enviar").disabled = true;
-    const det = $("#chat-detener"); det.textContent = "⏹ Detener"; det.style.display = "";
+    ta.value = ""; ta.style.height = "auto";
     // Si no hay conversación abierta, se crea sola con título del primer mensaje.
     if (!convActual){
       convActual = await window.pywebview.api.nueva_desde_texto(texto);
-      trans().innerHTML = "";
+      trans().innerHTML = ""; burbujaAgente = null;
       const data = await window.pywebview.api.cargar_conversacion(convActual);
       $("#chat-cab").style.display = "flex"; $("#chat-titulo").textContent = data.titulo;
       refrescarLista();
     }
+    corriendo.add(convActual);
+    actualizarBarra();
     window.pywebview.api.enviar(convActual, texto);
   }
-  function chatUsuario(html) { pintarMensaje("user", html); alFondo(); }
-  function chatInicioRespuesta() {
+  // Los callbacks llevan el nombre: solo pintan si es la conversación que mirás.
+  function chatUsuario(nombre, html) { corriendo.add(nombre); if (nombre === convActual){ pintarMensaje("user", html); alFondo(); actualizarBarra(); } }
+  function chatInicioRespuesta(nombre) {
+    if (nombre !== convActual) return;
     bufferStream = "";
     burbujaAgente = pintarMensaje("assistant", "<span style='color:#7a808a'>▍</span>"); alFondo();
   }
-  function chatFragmento(t) {
+  function chatFragmento(nombre, t) {
+    if (nombre !== convActual) return;
+    if (!burbujaAgente){ bufferStream = ""; burbujaAgente = pintarMensaje("assistant", ""); }
     bufferStream += t;
-    if (burbujaAgente) burbujaAgente.querySelector(".burbuja").textContent = bufferStream + "▍";
+    burbujaAgente.querySelector(".burbuja").textContent = bufferStream + "▍";
     alFondo();
   }
   function chatFin(nombre) {
-    // Recarga toda la conversación: así aparecen las ejecuciones (shell,
-    // biblioteca, paquetes…) además del texto final.
-    burbujaAgente = null; $("#enviar").disabled = false; $("#chat-detener").style.display = "none";
-    if (nombre === convActual) abrirConversacion(nombre);
+    corriendo.delete(nombre);
+    if (nombre === convActual){ burbujaAgente = null; abrirConversacion(nombre); }
+    else refrescarLista();
+    actualizarBarra();
   }
-  function chatError(txt) {
-    pintarMensaje("assistant", `<pre style="color:#ff8a8a">${escapar(txt)}</pre>`);
-    burbujaAgente = null; $("#enviar").disabled = false; $("#chat-detener").style.display = "none"; alFondo();
+  function chatError(nombre, txt) {
+    corriendo.delete(nombre);
+    if (nombre === convActual){
+      pintarMensaje("assistant", `<pre style="color:#ff8a8a">${escapar(txt)}</pre>`);
+      burbujaAgente = null; alFondo();
+    }
+    actualizarBarra();
   }
   const LANG_EJECUTABLE = {python:1, py:1, python3:1, bash:1, sh:1, shell:1, zsh:1};
   function langDe(pre){

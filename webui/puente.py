@@ -109,6 +109,20 @@ class Puente:
         d = self.gestor.crear_conversacion((titulo or "").strip())
         return d.name
 
+    def arte_bienvenida(self) -> Dict[str, Any]:
+        """El logo ASCII de arranque (core/bienvenida.py)."""
+        from core import bienvenida
+        return {"logo": bienvenida.LOGO.strip("\n")}
+
+    def nueva_desde_texto(self, texto: str) -> str:
+        """Crea una conversación tomando el título del primer mensaje (igual que
+        la app vieja: empezás a escribir y te pone en una conversación nueva con
+        título, sin tener que crearla a mano)."""
+        from core import bienvenida
+        titulo = bienvenida.title_from_text(texto or "")
+        d = self.gestor.crear_conversacion(titulo)
+        return d.name
+
     def detener_chat(self, nombre: str) -> Dict[str, Any]:
         """Frena el turno en curso de esa conversación (cancelación cooperativa:
         corta el loop de herramientas; una llamada al modelo ya emitida termina)."""

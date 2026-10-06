@@ -385,6 +385,28 @@ class Puente:
         from core import proxy_tool
         return proxy_tool.vaciar_captura()
 
+    def captura_sitios(self) -> Dict[str, Any]:
+        """Dominios capturados (agrupados por dominio registrable) con su conteo."""
+        from core import proxy_tool
+        r = proxy_tool.listar_sitios_capturados()
+        return {"sitios": r.get("sitios", []), "aviso": r.get("aviso")}
+
+    def captura_urls(self, sitio: str) -> Dict[str, Any]:
+        """Las URLs capturadas de un dominio (host + ruta), sin repetir."""
+        from core import proxy_tool
+        r = proxy_tool.buscar_en_captura(sitio=sitio, limite=400)
+        out, vistos = [], set()
+        for f in r.get("flujos", []):
+            url = (f.get("sitio") or "") + (f.get("ruta") or "")
+            clave = (f.get("metodo"), url)
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            out.append({"metodo": f.get("metodo") or "", "url": url,
+                        "estado": f.get("estado"),
+                        "tipo": (f.get("tipo") or "").split(";")[0]})
+        return {"urls": out[:400], "total": r.get("total", len(out))}
+
     # -- tareas programadas -------------------------------------------------
 
     _EMOJI_ESTADO = {"programada": "✅", "ausente": "⏸", "desconocido": "❓"}

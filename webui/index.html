@@ -138,6 +138,18 @@
                 background:var(--usuario); color:#fff; }
   #enj-enviar:disabled,#enj-msg:disabled { opacity:.5; }
 
+  /* --- captura: dominios/urls --- */
+  .dom { border:1px solid var(--borde); border-radius:8px; margin:0 0 8px; max-width:900px; overflow:hidden; }
+  .domhead { cursor:pointer; padding:8px 12px; font-size:13px; background:#fafbfc; }
+  .domhead .tog { color:var(--tenue); margin-right:4px; }
+  .domurls { border-top:1px solid var(--borde); max-height:340px; overflow:auto; }
+  .urlrow { padding:5px 12px; font:12px Menlo,monospace; border-bottom:1px solid #f0f1f3;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .urlrow:hover { background:#f6f7f9; white-space:normal; }
+  .m { display:inline-block; min-width:42px; font-weight:700; }
+  .m-get{color:#0f7b4f} .m-post{color:#b4530a} .m-put{color:#7b2ff7}
+  .m-delete{color:#b42318} .m-patch{color:#0e7490}
+
   /* --- tareas --- */
   .tcard { border:1px solid var(--borde); border-radius:8px; padding:12px 14px; margin:0 0 10px; max-width:820px; }
   .trow .temoji { margin-right:4px; }
@@ -270,6 +282,11 @@
           <span id="cap-estado"></span>
         </div>
         <p class="sub" id="cap-tamano" style="margin-top:16px"></p>
+
+        <h2 style="margin-top:26px">URLs capturadas</h2>
+        <p class="sub">Agrupadas por dominio. Tocá un dominio para ver sus URLs.
+           <button onclick="cargarSitios()" style="border:1px solid #c8ccd4;background:var(--panel);border-radius:7px;padding:3px 10px;cursor:pointer;margin-left:8px">↻ Refrescar</button></p>
+        <div id="cap-sitios"></div>
       </div>
     </section>
   </div>
@@ -330,6 +347,38 @@
     const s = await window.pywebview.api.captura_estado();
     $("#cap-tamano").textContent = "📦 Captura: " + s.texto
       + (s.corriendo ? "  ·  proxy escuchando" : "");
+    cargarSitios();
+  }
+  async function cargarSitios(){
+    const cont = $("#cap-sitios"); cont.innerHTML = '<p class="sub">cargando…</p>';
+    const r = await window.pywebview.api.captura_sitios();
+    cont.innerHTML = "";
+    if (!r.sitios || !r.sitios.length){
+      cont.innerHTML = '<p class="sub">' + escapar(r.aviso || "No hay nada capturado todavía.") + '</p>';
+      return;
+    }
+    for (const s of r.sitios){
+      const d = document.createElement("div"); d.className = "dom";
+      d.innerHTML = `<div class="domhead"><span class="tog">➕</span><b>${escapar(s.sitio)}</b>`
+        + ` <span class="tmeta">· ${s.flujos} flujos · ${(s.hosts||[]).length} host(s)</span></div>`
+        + `<div class="domurls" style="display:none"></div>`;
+      const head = d.querySelector(".domhead"), urls = d.querySelector(".domurls"), tog = d.querySelector(".tog");
+      head.onclick = async () => {
+        if (urls.dataset.cargado){
+          const abierto = urls.style.display !== "none";
+          urls.style.display = abierto ? "none" : ""; tog.textContent = abierto ? "➕" : "➖";
+          return;
+        }
+        urls.style.display = ""; tog.textContent = "➖"; urls.innerHTML = '<div class="urlrow">cargando…</div>';
+        const u = await window.pywebview.api.captura_urls(s.sitio);
+        urls.innerHTML = (u.urls || []).map(x =>
+          `<div class="urlrow"><span class="m m-${(x.metodo||'').toLowerCase()}">${escapar(x.metodo)}</span> `
+          + `${escapar(x.url)} <span class="tmeta">${x.estado||''} ${escapar(x.tipo||'')}</span></div>`
+        ).join("") || '<div class="urlrow">sin URLs</div>';
+        urls.dataset.cargado = "1";
+      };
+      cont.appendChild(d);
+    }
   }
   async function abrirFirefox(){
     const est = $("#cap-estado"); est.textContent = "abriendo…"; est.className = "";

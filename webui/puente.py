@@ -109,6 +109,27 @@ class Puente:
         d = self.gestor.crear_conversacion((titulo or "").strip())
         return d.name
 
+    def detener_chat(self, nombre: str) -> Dict[str, Any]:
+        """Frena el turno en curso de esa conversación (cancelación cooperativa:
+        corta el loop de herramientas; una llamada al modelo ya emitida termina)."""
+        chat = self._chats.get(nombre)
+        if chat is not None:
+            chat.cancelado = True
+        return {"ok": True}
+
+    def borrar_conversacion(self, nombre: str) -> Dict[str, Any]:
+        """Borra la conversación (su carpeta). No se puede deshacer."""
+        import shutil
+        d = self.gestor.cargar_conversacion(nombre)
+        if d is None:
+            return {"ok": False, "error": "no existe"}
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+            self._chats.pop(nombre, None)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def abrir_carpeta_conversacion(self, nombre: str) -> Dict[str, Any]:
         """Abre la carpeta de la conversación en el explorador del sistema."""
         from core import plataforma

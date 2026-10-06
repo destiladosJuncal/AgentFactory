@@ -48,6 +48,11 @@
   #chat-carpeta { border:1px solid var(--borde); background:var(--panel); cursor:pointer;
                   font-size:12px; border-radius:7px; padding:3px 10px; color:#444; }
   #chat-carpeta:hover { background:#e6e9ff; }
+  #chat-borrar { border:1px solid #f0c0c0; background:var(--panel); cursor:pointer;
+                 font-size:12px; border-radius:7px; padding:3px 10px; color:var(--error); }
+  #chat-borrar:hover { background:#fdeaea; }
+  #chat-detener { border:0; border-radius:10px; padding:10px 16px; cursor:pointer;
+                  background:var(--error); color:#fff; font-size:14px; }
   #trans { flex:1; overflow-y:auto; padding:22px 26px; }
 
   /* ejecuciones locales (shell, biblioteca, paquetes…) */
@@ -184,10 +189,12 @@
           <span id="chat-titulo"></span>
           <button id="chat-editar" title="Renombrar conversación" onclick="renombrarConversacion()">✏️</button>
           <button id="chat-carpeta" title="Abrir la carpeta de la conversación" onclick="abrirCarpeta()">📂 Abrir carpeta</button>
+          <button id="chat-borrar" title="Borrar conversación" onclick="borrarConversacion()">🗑 Borrar</button>
         </div>
         <div id="trans"><p class="vacio">Elegí una conversación o creá una nueva.</p></div>
         <div id="barra">
           <textarea id="entrada" rows="1" placeholder="Escribí un mensaje…  (Enter envía, Shift+Enter salto)"></textarea>
+          <button id="chat-detener" onclick="detenerChat()" style="display:none">⏹ Detener</button>
           <button id="enviar" onclick="enviar()">Enviar</button>
         </div>
       </div>
@@ -411,6 +418,36 @@
     if (!convActual) return;
     await window.pywebview.api.abrir_carpeta_conversacion(convActual);
   }
+  function detenerChat() {
+    if (!convActual) return;
+    $("#chat-detener").textContent = "deteniendo…";
+    window.pywebview.api.detener_chat(convActual);
+  }
+  async function borrarConversacion() {
+    if (!convActual) return;
+    const titulo = $("#chat-titulo").textContent;
+    const ok = await confirmarSimple("Borrar conversación",
+      `Se va a borrar «${escapar(titulo)}» y todo su contenido. No se puede deshacer.`,
+      "Borrar");
+    if (!ok) return;
+    const r = await window.pywebview.api.borrar_conversacion(convActual);
+    if (r.ok) {
+      convActual = null;
+      $("#chat-cab").style.display = "none";
+      trans().innerHTML = '<p class="vacio">Elegí una conversación o creá una nueva.</p>';
+      refrescarLista();
+    }
+  }
+  function confirmarSimple(titulo, cuerpo, okTxt){
+    return new Promise(res => {
+      const ov = document.createElement("div"); ov.className = "modal-ov";
+      ov.innerHTML = `<div class="modal"><h3>${escapar(titulo)}</h3><p>${cuerpo}</p>`
+        + `<div class="mbtn"><button class="mno">Cancelar</button><button class="msi">${escapar(okTxt||"OK")}</button></div></div>`;
+      document.body.appendChild(ov);
+      ov.querySelector(".mno").onclick = () => { ov.remove(); res(false); };
+      ov.querySelector(".msi").onclick = () => { ov.remove(); res(true); };
+    });
+  }
   function pintarItem(it) {
     if (it.tipo === "tool") return pintarTool(it);
     return pintarMensaje(it.tipo, it.html);
@@ -432,6 +469,7 @@
     const ta = $("#entrada"); const texto = ta.value.trim();
     if (!texto || !convActual) return;
     ta.value = ""; ta.style.height = "auto"; $("#enviar").disabled = true;
+    const det = $("#chat-detener"); det.textContent = "⏹ Detener"; det.style.display = "";
     window.pywebview.api.enviar(convActual, texto);
   }
   function chatUsuario(html) { pintarMensaje("user", html); alFondo(); }
@@ -447,12 +485,12 @@
   function chatFin(nombre) {
     // Recarga toda la conversación: así aparecen las ejecuciones (shell,
     // biblioteca, paquetes…) además del texto final.
-    burbujaAgente = null; $("#enviar").disabled = false;
+    burbujaAgente = null; $("#enviar").disabled = false; $("#chat-detener").style.display = "none";
     if (nombre === convActual) abrirConversacion(nombre);
   }
   function chatError(txt) {
     pintarMensaje("assistant", `<pre style="color:#ff8a8a">${escapar(txt)}</pre>`);
-    burbujaAgente = null; $("#enviar").disabled = false; alFondo();
+    burbujaAgente = null; $("#enviar").disabled = false; $("#chat-detener").style.display = "none"; alFondo();
   }
   const LANG_EJECUTABLE = {python:1, py:1, python3:1, bash:1, sh:1, shell:1, zsh:1};
   function langDe(pre){

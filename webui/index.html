@@ -105,7 +105,10 @@
   .mbtn button { border:0; border-radius:8px; padding:8px 16px; cursor:pointer; }
   .mbtn .mno { background:var(--panel); }
   .mbtn .msi { background:var(--error); color:#fff; }
-  #barra { border-top:1px solid var(--borde); padding:12px 26px; display:flex; gap:10px; align-items:flex-end; }
+  #chat-ctrl { padding:6px 26px 0; display:flex; gap:12px; align-items:center; font-size:13px; color:var(--tenue); }
+  #chat-seguir { border:0; border-radius:7px; padding:4px 12px; cursor:pointer; background:var(--agente); color:#fff; font-size:13px; }
+  #chat-aviso { color:var(--tenue); }
+  #barra { border-top:1px solid var(--borde); padding:10px 26px 12px; display:flex; gap:10px; align-items:flex-end; }
   #entrada { flex:1; resize:none; font:15px -apple-system,sans-serif; border:1px solid #c8ccd4;
              border-radius:10px; padding:10px 12px; max-height:160px; }
   #enviar { border:0; border-radius:10px; padding:10px 18px; cursor:pointer;
@@ -210,6 +213,11 @@
           <button id="chat-borrar" title="Borrar conversación" onclick="borrarConversacion()">🗑 Borrar</button>
         </div>
         <div id="trans"><p class="vacio">Elegí una conversación o creá una nueva.</p></div>
+        <div id="chat-ctrl">
+          <label title="Cuando el agente corta preguntando «¿sigo?», le respondo solo (hasta 5 veces por mensaje tuyo). No desactiva ninguna confirmación de seguridad."><input type="checkbox" id="chat-auto"> Sí a todo</label>
+          <button id="chat-seguir" onclick="continuarAhora()" style="display:none">▶ Sí, seguí</button>
+          <span id="chat-aviso"></span>
+        </div>
         <div id="barra">
           <textarea id="entrada" rows="1" placeholder="Escribí un mensaje…  (Enter envía, Shift+Enter salto)"></textarea>
           <button id="chat-detener" onclick="detenerChat()" style="display:none">⏹ Detener</button>
@@ -403,7 +411,10 @@
   // ===================== CHAT =====================
   let convActual = null, burbujaAgente = null, bufferStream = "", enjambreAbierto = false;
   const corriendo = new Set();            // conversaciones con un turno en curso
+  const MAX_AUTO = 5;                      // auto-continuaciones por mensaje tuyo
+  const autoRestantes = {};               // conv -> cuántas quedan
   const trans = () => $("#trans");
+  const autoOn = () => $("#chat-auto").checked;
   function alFondo() { const t = trans(); t.scrollTop = t.scrollHeight; }
   function actualizarBarra(){
     // Enviar/Detener reflejan el estado de LA conversación que estás mirando.
@@ -446,6 +457,7 @@
     const data = await window.pywebview.api.cargar_conversacion(nombre);
     $("#chat-cab").style.display = "flex";
     $("#chat-titulo").textContent = data.titulo;
+    $("#chat-seguir").style.display = "none"; $("#chat-aviso").textContent = "";
     const t = trans(); t.innerHTML = "";
     burbujaAgente = null;
     for (const it of data.mensajes) pintarItem(it);
@@ -557,9 +569,30 @@
       $("#chat-cab").style.display = "flex"; $("#chat-titulo").textContent = data.titulo;
       refrescarLista();
     }
+    autoRestantes[convActual] = MAX_AUTO;   // mensaje tuyo: reinicia el tope
+    $("#chat-seguir").style.display = "none"; $("#chat-aviso").textContent = "";
     corriendo.add(convActual);
     actualizarBarra();
     window.pywebview.api.enviar(convActual, texto);
+  }
+  function continuarAhora(){ if (convActual) continuarTurno(convActual); }
+  function continuarTurno(nombre){
+    if (corriendo.has(nombre)) return;
+    if (nombre === convActual){ $("#chat-seguir").style.display = "none"; }
+    corriendo.add(nombre); actualizarBarra();
+    window.pywebview.api.continuar_turno(nombre);
+  }
+  function manejarPausa(nombre, pausa){
+    if (!pausa) return;
+    const rest = autoRestantes[nombre] ?? 0;
+    if (autoOn() && rest > 0){
+      autoRestantes[nombre] = rest - 1;
+      if (nombre === convActual) $("#chat-aviso").textContent = `↻ sigo solo (quedan ${rest - 1} de ${MAX_AUTO})`;
+      setTimeout(() => continuarTurno(nombre), 400);
+    } else if (nombre === convActual){
+      $("#chat-seguir").style.display = "";
+      if (autoOn()) $("#chat-aviso").textContent = `⏸ llegué al tope de ${MAX_AUTO}; seguí vos si querés`;
+    }
   }
   // Los callbacks llevan el nombre: solo pintan si es la conversación que mirás.
   function chatUsuario(nombre, html) { corriendo.add(nombre); if (nombre === convActual){ pintarMensaje("user", html); alFondo(); actualizarBarra(); } }
@@ -575,11 +608,12 @@
     burbujaAgente.querySelector(".burbuja").textContent = bufferStream + "▍";
     alFondo();
   }
-  function chatFin(nombre) {
+  async function chatFin(nombre, pausa) {
     corriendo.delete(nombre);
-    if (nombre === convActual){ burbujaAgente = null; abrirConversacion(nombre); }
+    if (nombre === convActual){ burbujaAgente = null; await abrirConversacion(nombre); }
     else refrescarLista();
     actualizarBarra();
+    manejarPausa(nombre, pausa);
   }
   function chatError(nombre, txt) {
     corriendo.delete(nombre);

@@ -191,22 +191,38 @@ class Puente:
                          daemon=True).start()
         return {"ok": True}
 
-    def _worker_enviar(self, nombre: str, texto: str):
+    # Mensaje que se manda al auto-continuar (igual que la app vieja).
+    _TEXTO_CONTINUAR = (
+        "Sí, seguí con lo que propusiste. Si en realidad necesitabas que "
+        "eligiera entre alternativas, no asumas: pará y preguntame concreto.")
+
+    def continuar_turno(self, nombre: str) -> Dict[str, Any]:
+        """Manda la respuesta de continuación (del botón '▶ Sí, seguí' o del
+        'Sí a todo' automático)."""
+        threading.Thread(target=self._worker_enviar,
+                         args=(nombre, self._TEXTO_CONTINUAR, "▶ (sí, seguí)"),
+                         daemon=True).start()
+        return {"ok": True}
+
+    def _worker_enviar(self, nombre: str, texto: str, etiqueta: str = None):
         try:
             chat = self._chat(nombre)
         except Exception:
-            self._js("chatError", traceback.format_exc())
+            self._js("chatError", nombre, traceback.format_exc())
             return
+        from core.chat import parece_pausa
         # Todos los eventos llevan el nombre de la conversación, para que el front
         # pinte cada stream en SU conversación (y no en la que estés mirando) y
         # para que Enviar/Detener reflejen el estado de cada una por separado.
-        self._js("chatUsuario", nombre, md_a_html(texto))
+        self._js("chatUsuario", nombre, md_a_html(etiqueta or texto))
         self._js("chatInicioRespuesta", nombre)
         try:
-            chat.enviar(texto, al_fragmento=lambda t: self._js("chatFragmento", nombre, t))
-            # Al terminar se recarga la conversación: así aparecen las ejecuciones
-            # (shell, biblioteca, paquetes…) además del texto final.
-            self._js("chatFin", nombre)
+            respuesta = chat.enviar(
+                texto, al_fragmento=lambda t: self._js("chatFragmento", nombre, t))
+            # chatFin lleva `pausa`: True si el agente cortó preguntando (para el
+            # 'Sí a todo' / el botón de continuar). Recarga la conversación para
+            # mostrar las ejecuciones además del texto final.
+            self._js("chatFin", nombre, bool(parece_pausa(respuesta)))
         except Exception:
             self._js("chatError", nombre, traceback.format_exc())
 

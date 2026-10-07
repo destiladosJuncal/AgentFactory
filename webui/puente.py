@@ -61,7 +61,11 @@ class Puente:
                 "titulo": c.get("titulo") or c["path"].name,
                 "mensajes": c.get("mensajes", 0),
                 "crew": c["path"].name.startswith("crew-"),
+                "creado": c.get("creado", ""),
+                "actualizado": c.get("actualizado", c.get("creado", "")),
             })
+        # Más recientes primero: la lista queda como un registro cronológico.
+        out.sort(key=lambda x: x.get("actualizado") or "", reverse=True)
         return out
 
     def _chat(self, nombre: str) -> ConversacionChat:
@@ -103,6 +107,8 @@ class Puente:
                 })
         return {"nombre": nombre,
                 "titulo": chat.meta.get("titulo", nombre),
+                "creado": chat.meta.get("creado", ""),
+                "actualizado": chat.meta.get("actualizado", chat.meta.get("creado", "")),
                 "mensajes": items}
 
     def nueva_conversacion(self, titulo: str = "") -> str:

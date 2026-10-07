@@ -208,6 +208,7 @@
       <div id="chatmain">
         <div id="chat-cab" style="display:none">
           <span id="chat-titulo"></span>
+          <span id="chat-fecha" class="tmeta"></span>
           <button id="chat-editar" title="Renombrar conversación" onclick="renombrarConversacion()">✏️</button>
           <button id="chat-carpeta" title="Abrir la carpeta de la conversación" onclick="abrirCarpeta()">📂 Abrir carpeta</button>
           <button id="chat-borrar" title="Borrar conversación" onclick="borrarConversacion()">🗑 Borrar</button>
@@ -432,7 +433,9 @@
     div.onclick = () => abrirConversacion(c.nombre);
     const icono = (c.crew && !hijo) ? "🤝 " : "";
     const run = corriendo.has(c.nombre) ? "⏳ " : "";
-    div.innerHTML = `<div>${run}${icono}${escapar(c.titulo)}</div><div class="n">${c.mensajes} mensaje(s)</div>`;
+    const fecha = (c.actualizado || c.creado || "").slice(0, 16);   // YYYY-MM-DD HH:MM
+    div.innerHTML = `<div>${run}${icono}${escapar(c.titulo)}</div>`
+      + `<div class="n">${fecha ? "🕒 " + escapar(fecha) + " · " : ""}${c.mensajes} mensaje(s)</div>`;
     return div;
   }
   async function refrescarLista() {
@@ -457,6 +460,8 @@
     const data = await window.pywebview.api.cargar_conversacion(nombre);
     $("#chat-cab").style.display = "flex";
     $("#chat-titulo").textContent = data.titulo;
+    const fh = (data.creado || "").slice(0, 16);
+    $("#chat-fecha").textContent = fh ? "· creada " + fh : "";
     $("#chat-seguir").style.display = "none"; $("#chat-aviso").textContent = "";
     const t = trans(); t.innerHTML = "";
     burbujaAgente = null;

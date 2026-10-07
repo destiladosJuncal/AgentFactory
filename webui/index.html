@@ -73,6 +73,7 @@
   .conv.hijo { padding-left:30px; background:#fafbfc; }
   .msg { max-width:820px; margin:0 auto 20px; }
   .quien { font-size:12px; font-weight:700; margin-bottom:4px; }
+  .quien .hora { color:var(--tenue); font-weight:400; font-size:11px; margin-left:8px; }
   .msg.user .quien { color:var(--usuario); }
   .msg.assistant .quien { color:var(--agente); }
   .burbuja { line-height:1.5; }
@@ -435,7 +436,7 @@
     const run = corriendo.has(c.nombre) ? "⏳ " : "";
     const fecha = (c.actualizado || c.creado || "").slice(0, 16);   // YYYY-MM-DD HH:MM
     div.innerHTML = `<div>${run}${icono}${escapar(c.titulo)}</div>`
-      + `<div class="n">${fecha ? "🕒 " + escapar(fecha) + " · " : ""}${c.mensajes} mensaje(s)</div>`;
+      + `<div class="n">${fecha ? escapar(fecha) + " · " : ""}${c.mensajes} mensaje(s)</div>`;
     return div;
   }
   async function refrescarLista() {
@@ -533,7 +534,7 @@
   }
   function pintarItem(it) {
     if (it.tipo === "tool") return pintarTool(it);
-    return pintarMensaje(it.tipo, it.html);
+    return pintarMensaje(it.tipo, it.html, it.ts);
   }
   function pintarTool(it) {
     const d = document.createElement("details"); d.className = "exec";
@@ -542,10 +543,17 @@
                 + `<pre>${escapar(it.resultado || "")}</pre>`;
     trans().appendChild(d); return d;
   }
-  function pintarMensaje(rol, html) {
+  function ahoraStr(){
+    const d = new Date(); const p = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function pintarMensaje(rol, html, fecha) {
     const div = document.createElement("div");
     div.className = "msg " + rol;
-    div.innerHTML = `<div class="quien">${rol === "user" ? "🧑 Vos" : "● Agente"}</div><div class="burbuja">${html}</div>`;
+    const quien = rol === "user" ? "🧑 Vos" : "● Agente";
+    const f = (fecha || "").slice(0, 16);
+    div.innerHTML = `<div class="quien">${quien}<span class="hora">${escapar(f)}</span></div>`
+                  + `<div class="burbuja">${html}</div>`;
     trans().appendChild(div); return div;
   }
   let bienvCache = null;
@@ -600,15 +608,15 @@
     }
   }
   // Los callbacks llevan el nombre: solo pintan si es la conversación que mirás.
-  function chatUsuario(nombre, html) { corriendo.add(nombre); if (nombre === convActual){ pintarMensaje("user", html); alFondo(); actualizarBarra(); } }
+  function chatUsuario(nombre, html) { corriendo.add(nombre); if (nombre === convActual){ pintarMensaje("user", html, ahoraStr()); alFondo(); actualizarBarra(); } }
   function chatInicioRespuesta(nombre) {
     if (nombre !== convActual) return;
     bufferStream = "";
-    burbujaAgente = pintarMensaje("assistant", "<span style='color:#7a808a'>▍</span>"); alFondo();
+    burbujaAgente = pintarMensaje("assistant", "<span style='color:#7a808a'>▍</span>", ahoraStr()); alFondo();
   }
   function chatFragmento(nombre, t) {
     if (nombre !== convActual) return;
-    if (!burbujaAgente){ bufferStream = ""; burbujaAgente = pintarMensaje("assistant", ""); }
+    if (!burbujaAgente){ bufferStream = ""; burbujaAgente = pintarMensaje("assistant", "", ahoraStr()); }
     bufferStream += t;
     burbujaAgente.querySelector(".burbuja").textContent = bufferStream + "▍";
     alFondo();

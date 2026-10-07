@@ -87,8 +87,9 @@ class Puente:
         items = []
         for m in chat.mensajes:
             rol = m.get("role")
+            ts = m.get("ts", "")
             if rol == "user":
-                items.append({"tipo": "user", "html": md_a_html(m.get("content") or "")})
+                items.append({"tipo": "user", "ts": ts, "html": md_a_html(m.get("content") or "")})
             elif rol == "assistant":
                 for tc in (m.get("tool_calls") or []):
                     fn = tc.get("function", {})
@@ -96,11 +97,11 @@ class Puente:
                                                "args": fn.get("arguments", "")}
                 cont = (m.get("content") or "").strip()
                 if cont:
-                    items.append({"tipo": "assistant", "html": md_a_html(cont)})
+                    items.append({"tipo": "assistant", "ts": ts, "html": md_a_html(cont)})
             elif rol == "tool":
                 meta = meta_tool.get(m.get("tool_call_id"), {})
                 items.append({
-                    "tipo": "tool",
+                    "tipo": "tool", "ts": ts,
                     "nombre": meta.get("nombre", "herramienta"),
                     "args": meta.get("args", ""),
                     "resultado": m.get("content") or "",

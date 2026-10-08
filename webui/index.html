@@ -38,7 +38,8 @@
                  border-radius:8px; font-size:13px; outline:none; }
   #conv-buscar:focus { border-color:var(--acento); }
   #lista { overflow-y:auto; flex:1; }
-  .conv { padding:9px 14px; cursor:pointer; border-bottom:1px solid var(--borde); font-size:13px; }
+  .conv { padding:11px 14px; cursor:pointer; border-bottom:2px solid #c3c9d4; font-size:13px; }
+  .conv.hijo { border-bottom:1px solid var(--borde); }
   .conv:hover { background:#eef0f3; }
   .conv.sel { background:#e6e9ff; border-left:3px solid var(--acento); padding-left:11px; }
   .conv .n { color:var(--tenue); font-size:11px; }
@@ -109,6 +110,12 @@
   .mbtn button { border:0; border-radius:8px; padding:8px 16px; cursor:pointer; }
   .mbtn .mno { background:var(--panel); }
   .mbtn .msi { background:var(--error); color:#fff; }
+  .mbtn .mperm { background:var(--panel); border:1px solid #c8ccd4; }
+  .mbtn .msiempre { background:var(--agente); color:#fff; }
+  .modal.ancho { max-width:640px; }
+  .conf-det { background:#0f1115; color:#e7eaf1; border-radius:8px; padding:12px;
+              font:12px Menlo,monospace; white-space:pre-wrap; word-break:break-word;
+              max-height:300px; overflow:auto; margin:0; }
   #chat-ctrl { padding:6px 26px 0; display:flex; gap:12px; align-items:center; font-size:13px; color:var(--tenue); }
   #chat-seguir { border:0; border-radius:7px; padding:4px 12px; cursor:pointer; background:var(--agente); color:#fff; font-size:13px; }
   #chat-aviso { color:var(--tenue); }
@@ -719,6 +726,34 @@
       ov.querySelector(".mno").onclick = () => { ov.remove(); res(false); };
       ov.querySelector(".msi").onclick = () => { ov.remove(); res(true); };
     });
+  }
+  // --- Guardián: el AGENTE pide permiso para algo destructivo --------------
+  const confModales = {};
+  function confirmarPedir(cid, resumen, detalle, clave){
+    confirmarCerrar(cid);   // por si quedó uno viejo con ese id
+    const ov = document.createElement("div"); ov.className = "modal-ov";
+    ov.innerHTML = `<div class="modal ancho">`
+      + `<h3 style="color:var(--error)">⚠️ El agente quiere hacer algo que no se puede deshacer</h3>`
+      + `<p>${escapar(resumen)}</p>`
+      + `<div class="n" style="margin-bottom:4px">Esto es lo que va a ejecutar:</div>`
+      + `<pre class="conf-det">${escapar(detalle)}</pre>`
+      + `<div class="mbtn">`
+      + `<button class="mno">No, cancelar</button>`
+      + `<button class="mperm">Permitir una vez</button>`
+      + `<button class="msiempre">Permitir siempre (${escapar(clave)})</button>`
+      + `</div>`
+      + `<div class="n" style="margin-top:10px">«Permitir siempre» aplica solo a este tipo de operación y se olvida al cerrar la app.</div>`
+      + `</div>`;
+    document.body.appendChild(ov);
+    confModales[cid] = ov;
+    const responder = (dec) => { confirmarCerrar(cid); window.pywebview.api.confirmar_responder(cid, dec); };
+    ov.querySelector(".mno").onclick = () => responder("no");
+    ov.querySelector(".mperm").onclick = () => responder("permitir");
+    ov.querySelector(".msiempre").onclick = () => responder("siempre");
+  }
+  function confirmarCerrar(cid){
+    const ov = confModales[cid];
+    if (ov){ ov.remove(); delete confModales[cid]; }
   }
 
   // ===================== CONFIG =====================

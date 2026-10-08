@@ -38,6 +38,14 @@ class Puente:
         self._enjambre_cancelado = False
         self._proxy = None            # captura (mitmproxy)
         self._almacen = None
+        # Guardián: cuando el agente quiere correr algo destructivo, el core nos
+        # pide confirmación desde el hilo de trabajo. Lo mostramos como ventana
+        # modal en la UI y bloqueamos el hilo hasta que la persona decide.
+        self._confirmaciones: Dict[str, Any] = {}
+        self._confirm_lock = threading.Lock()
+        self._confirm_seq = 0
+        from core import ejecucion
+        ejecucion.registrar_confirmador(self._confirmar_desde_hilo)
 
     # -- JS helper ----------------------------------------------------------
 
@@ -148,6 +156,7 @@ class Puente:
         chat = self._chats.get(nombre)
         if chat is not None:
             chat.cancelado = True
+        self._resolver_confirmaciones_pendientes()
         return {"ok": True}
 
     def borrar_conversacion(self, nombre: str) -> Dict[str, Any]:
@@ -349,6 +358,51 @@ class Puente:
         finally:
             ejecucion.CONFIRMADOR = anterior
         return {"ok": True, "resultado": r}
+
+    # -- guardián de confirmaciones (el agente pide permiso) ---------------
+
+    def _confirmar_desde_hilo(self, resumen: str, detalle: str, clave: str) -> str:
+        """Lo llama core.ejecucion desde el hilo de trabajo cuando el agente va a
+        correr algo que no se puede deshacer. Muestra la ventana de aprobación y
+        bloquea el hilo hasta que la persona responde (tope de 5 min por las
+        dudas, para no dejar el turno colgado para siempre)."""
+        if self.window is None:
+            return "no"
+        evento, caja = threading.Event(), []
+        with self._confirm_lock:
+            self._confirm_seq += 1
+            cid = f"c{self._confirm_seq}"
+            self._confirmaciones[cid] = (evento, caja)
+        self._js("confirmarPedir", cid, resumen, detalle, clave)
+        if not evento.wait(timeout=300):
+            self._js("confirmarCerrar", cid)
+            with self._confirm_lock:
+                self._confirmaciones.pop(cid, None)
+            return "no"
+        with self._confirm_lock:
+            self._confirmaciones.pop(cid, None)
+        return caja[0] if caja else "no"
+
+    def confirmar_responder(self, cid: str, decision: str) -> Dict[str, Any]:
+        """El front devuelve la decisión (permitir / siempre / no)."""
+        with self._confirm_lock:
+            par = self._confirmaciones.get(cid)
+        if par is None:
+            return {"ok": False}
+        evento, caja = par
+        caja.append(decision if decision in ("permitir", "siempre") else "no")
+        evento.set()
+        return {"ok": True}
+
+    def _resolver_confirmaciones_pendientes(self):
+        """Si se detiene el turno, no dejamos ninguna confirmación colgada."""
+        with self._confirm_lock:
+            pendientes = list(self._confirmaciones.items())
+        for cid, (evento, caja) in pendientes:
+            if not caja:
+                caja.append("no")
+            evento.set()
+            self._js("confirmarCerrar", cid)
 
     # -- configuración ------------------------------------------------------
 

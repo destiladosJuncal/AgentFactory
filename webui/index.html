@@ -34,6 +34,9 @@
                    border-right:1px solid var(--borde); display:flex; flex-direction:column; }
   #nueva { margin:10px; padding:8px; border:0; border-radius:8px; cursor:pointer;
            background:var(--acento); color:#fff; font-size:13px; }
+  #conv-buscar { margin:0 10px 8px; padding:7px 10px; border:1px solid var(--borde);
+                 border-radius:8px; font-size:13px; outline:none; }
+  #conv-buscar:focus { border-color:var(--acento); }
   #lista { overflow-y:auto; flex:1; }
   .conv { padding:9px 14px; cursor:pointer; border-bottom:1px solid var(--borde); font-size:13px; }
   .conv:hover { background:#eef0f3; }
@@ -204,6 +207,7 @@
     <section class="vista act" id="vista-chat">
       <div id="convlist-wrap">
         <button id="nueva" onclick="nuevaConversacion()">+ Nueva conversación</button>
+        <input id="conv-buscar" placeholder="🔎 Buscar conversación…">
         <div id="lista"></div>
       </div>
       <div id="chatmain">
@@ -249,6 +253,21 @@
           <button id="pkg-zip" onclick="crearPaquete('zip')" style="background:var(--panel);border:1px solid #c8ccd4">📦 Crear .zip portable</button>
           <button id="pkg-dmg" onclick="crearPaquete('dmg')" style="background:var(--panel);border:1px solid #c8ccd4">🐋 Crear .dmg (Mac)</button>
           <span id="pkg-estado"></span>
+        </div>
+
+        <h2 style="margin-top:30px">Comprimir conversaciones viejas</h2>
+        <p class="sub">Archiva las conversaciones más viejas que los días indicados en
+           un <code>.zip</code> (queda en <code>_archivo/</code> como respaldo) y las saca
+           de la lista. No se pierde nada: solo libera espacio y despeja la lista.</p>
+        <div class="acciones" style="padding-left:0; align-items:center">
+          <span>Más viejas que</span>
+          <input id="comp-dias" type="number" min="1" value="90"
+                 style="width:70px; padding:6px; border:1px solid var(--borde); border-radius:6px"
+                 oninput="previewComprimir()">
+          <span>días</span>
+          <button id="comp-btn" onclick="comprimirViejas()"
+                  style="background:var(--panel);border:1px solid #c8ccd4">🗜️ Comprimir</button>
+          <span id="comp-estado"></span>
         </div>
       </div>
     </section>
@@ -412,6 +431,7 @@
 
   // ===================== CHAT =====================
   let convActual = null, burbujaAgente = null, bufferStream = "", enjambreAbierto = false;
+  let convsCache = [], filtroConv = "";
   const corriendo = new Set();            // conversaciones con un turno en curso
   const MAX_AUTO = 5;                      // auto-continuaciones por mensaje tuyo
   const autoRestantes = {};               // conv -> cuántas quedan
@@ -440,20 +460,32 @@
     return div;
   }
   async function refrescarLista() {
-    const convs = await window.pywebview.api.listar_conversaciones();
+    convsCache = await window.pywebview.api.listar_conversaciones();
+    renderLista();
+  }
+  function renderLista() {
     const cont = $("#lista"); cont.innerHTML = "";
-    const normales = convs.filter(c => !c.crew);
-    const enjambre = convs.filter(c => c.crew);
+    const q = filtroConv.trim().toLowerCase();
+    const coincide = c => !q || (c.titulo || "").toLowerCase().includes(q);
+    const normales = convsCache.filter(c => !c.crew && coincide(c));
+    const enjambre = convsCache.filter(c => c.crew && coincide(c));
     for (const c of normales) cont.appendChild(filaConv(c, false));
     if (enjambre.length) {
       // El enjambre va agrupado en UN nodo con + para desplegar las
-      // sub-conversaciones (una por agente).
+      // sub-conversaciones (una por agente). Con búsqueda activa se abre solo.
+      const abrir = enjambreAbierto || !!q;
       const g = document.createElement("div");
       g.className = "grupo";
-      g.textContent = (enjambreAbierto ? "➖" : "➕") + " 🤝 Enjambre (" + enjambre.length + ")";
-      g.onclick = () => { enjambreAbierto = !enjambreAbierto; refrescarLista(); };
+      g.textContent = (abrir ? "➖" : "➕") + " 🤝 Enjambre (" + enjambre.length + ")";
+      g.onclick = () => { enjambreAbierto = !enjambreAbierto; renderLista(); };
       cont.appendChild(g);
-      if (enjambreAbierto) for (const c of enjambre) cont.appendChild(filaConv(c, true));
+      if (abrir) for (const c of enjambre) cont.appendChild(filaConv(c, true));
+    }
+    if (q && !normales.length && !enjambre.length) {
+      const v = document.createElement("div");
+      v.className = "n"; v.style.padding = "10px";
+      v.textContent = "Sin resultados para “" + filtroConv.trim() + "”";
+      cont.appendChild(v);
     }
   }
   async function abrirConversacion(nombre) {
@@ -704,6 +736,7 @@
       cont.appendChild(row);
     }
     $("#cfg-estado").textContent = "";
+    previewComprimir();
   }
   function cfgCambios() {
     const cambios = {};
@@ -730,6 +763,33 @@
       if (r.ok) { est.textContent = "✅ Listo: " + r.ruta; est.className = "ok"; }
       else { est.textContent = "❌ " + (r.error || "falló") + (r.detalle ? (" — " + JSON.stringify(r.detalle)) : ""); est.className = "err"; }
     } finally { $("#pkg-zip").disabled = false; $("#pkg-dmg").disabled = false; }
+  }
+  async function previewComprimir() {
+    const dias = parseInt($("#comp-dias").value, 10) || 0;
+    const est = $("#comp-estado");
+    if (dias < 1) { est.textContent = ""; return; }
+    const r = await window.pywebview.api.conversaciones_viejas(dias);
+    est.className = "";
+    est.textContent = r.cantidad
+      ? `→ ${r.cantidad} conversación(es), ${r.legible}`
+      : "→ ninguna más vieja que eso";
+  }
+  async function comprimirViejas() {
+    const dias = parseInt($("#comp-dias").value, 10) || 0;
+    const est = $("#comp-estado");
+    if (dias < 1) { est.textContent = "Poné un número de días."; est.className = "err"; return; }
+    const prev = await window.pywebview.api.conversaciones_viejas(dias);
+    if (!prev.cantidad) { est.textContent = "→ ninguna más vieja que eso"; est.className = ""; return; }
+    if (!confirm(`Se archivarán ${prev.cantidad} conversación(es) (${prev.legible}) en un .zip y se sacarán de la lista. El zip queda como respaldo. ¿Seguir?`)) return;
+    $("#comp-btn").disabled = true; est.textContent = "comprimiendo…"; est.className = "";
+    try {
+      const r = await window.pywebview.api.comprimir_viejas(dias);
+      if (r.ok) {
+        est.textContent = `✅ ${r.cantidad} archivada(s) (${r.legible}) → ${r.ruta || "_archivo/"}`;
+        est.className = "ok";
+        refrescarLista();
+      } else { est.textContent = "❌ " + (r.error || "falló"); est.className = "err"; }
+    } finally { $("#comp-btn").disabled = false; }
   }
   async function probarProveedor() {
     const est = $("#cfg-estado"); est.textContent = "Probando…"; est.className = "";
@@ -806,6 +866,7 @@
   ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } });
   ta.addEventListener("input", () => { ta.style.height="auto"; ta.style.height=Math.min(160,ta.scrollHeight)+"px"; });
   $("#enj-msg").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); enjEnviar(); } });
+  $("#conv-buscar").addEventListener("input", (e) => { filtroConv = e.target.value; renderLista(); });
 
   async function init(){ await refrescarLista(); mostrarBienvenida(); }
   window.addEventListener("pywebviewready", init);

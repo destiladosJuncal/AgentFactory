@@ -163,6 +163,97 @@ class Puente:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ---- Comprimir conversaciones viejas -----------------------------------
+    @staticmethod
+    def _fecha_conv(c: Dict[str, Any]):
+        """Devuelve un datetime de la conversación (actualizado o creado), o None."""
+        from datetime import datetime
+        txt = (c.get("actualizado") or c.get("creado") or "").strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(txt[:len(fmt) + 2], fmt)
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _tam_carpeta(d: Path) -> int:
+        total = 0
+        for f in d.rglob("*"):
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except Exception:
+                pass
+        return total
+
+    def _viejas(self, dias: int) -> List[Dict[str, Any]]:
+        """Conversaciones cuyo 'actualizado' es más viejo que `dias` días."""
+        from datetime import datetime, timedelta
+        limite = datetime.now() - timedelta(days=max(0, int(dias)))
+        out = []
+        for c in self.listar_conversaciones():
+            f = self._fecha_conv(c)
+            if f is not None and f < limite:
+                out.append(c)
+        return out
+
+    def conversaciones_viejas(self, dias: int = 90) -> Dict[str, Any]:
+        """Vista previa: cuántas conversaciones se comprimirían y cuánto pesan."""
+        from core import formato
+        viejas = self._viejas(dias)
+        total = 0
+        for c in viejas:
+            d = self.gestor.cargar_conversacion(c["nombre"])
+            if d is not None:
+                total += self._tam_carpeta(d)
+        return {"cantidad": len(viejas), "bytes": total, "legible": formato.size(total)}
+
+    def comprimir_viejas(self, dias: int = 90) -> Dict[str, Any]:
+        """Archiva en un .zip (y saca de la lista) las conversaciones más viejas
+        que `dias` días. El zip queda en <datos>/_archivo/ como respaldo; no se
+        pierde nada, solo se libera espacio y se despeja la lista."""
+        import shutil
+        import zipfile
+        from datetime import datetime
+        from core import formato, plataforma
+        viejas = self._viejas(dias)
+        if not viejas:
+            return {"ok": True, "cantidad": 0, "legible": formato.size(0)}
+        dir_archivo = self.gestor.base_dir.parent / "_archivo"
+        dir_archivo.mkdir(parents=True, exist_ok=True)
+        sello = datetime.now().strftime("%Y%m%d-%H%M%S")
+        zip_path = dir_archivo / f"conversaciones-{sello}.zip"
+        liberado = 0
+        archivadas = 0
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+                for c in viejas:
+                    d = self.gestor.cargar_conversacion(c["nombre"])
+                    if d is None:
+                        continue
+                    liberado += self._tam_carpeta(d)
+                    for f in d.rglob("*"):
+                        if f.is_file():
+                            z.write(f, Path(c["nombre"]) / f.relative_to(d))
+                    archivadas += 1
+            # Recién después de escribir el zip OK, borro los originales.
+            for c in viejas:
+                d = self.gestor.cargar_conversacion(c["nombre"])
+                if d is not None:
+                    shutil.rmtree(d, ignore_errors=True)
+                    self._chats.pop(c["nombre"], None)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        plataforma.abrir_carpeta(dir_archivo)
+        return {
+            "ok": True,
+            "cantidad": archivadas,
+            "bytes": liberado,
+            "legible": formato.size(liberado),
+            "ruta": str(zip_path),
+        }
+
     def abrir_carpeta_conversacion(self, nombre: str) -> Dict[str, Any]:
         """Abre la carpeta de la conversación en el explorador del sistema."""
         from core import plataforma

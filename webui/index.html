@@ -76,8 +76,13 @@
            font-size:13px; font-weight:600; background:#eef0f3; }
   .conv.hijo { padding-left:30px; background:#fafbfc; }
   .msg { max-width:820px; margin:0 auto 20px; }
-  .quien { font-size:12px; font-weight:700; margin-bottom:4px; }
+  .quien { font-size:12px; font-weight:700; margin-bottom:4px; display:flex; align-items:center; }
   .quien .hora { color:var(--tenue); font-weight:400; font-size:11px; margin-left:8px; }
+  .copiar-msg { margin-left:auto; border:1px solid #c8ccd4; background:var(--panel);
+                color:#444; font-size:11px; border-radius:6px; padding:2px 8px; cursor:pointer;
+                opacity:0; transition:opacity .12s; }
+  .msg:hover .copiar-msg { opacity:.85; }
+  .copiar-msg:hover { opacity:1; background:#e6e9ff; }
   .msg.user .quien { color:var(--usuario); }
   .msg.assistant .quien { color:var(--agente); }
   .burbuja { line-height:1.5; }
@@ -591,8 +596,14 @@
     div.className = "msg " + rol;
     const quien = rol === "user" ? "🧑 Vos" : "● Agente";
     const f = (fecha || "").slice(0, 16);
-    div.innerHTML = `<div class="quien">${quien}<span class="hora">${escapar(f)}</span></div>`
+    div.innerHTML = `<div class="quien">${quien}<span class="hora">${escapar(f)}</span>`
+                  + `<button class="copiar-msg" title="Copiar toda la respuesta">⧉ Copiar</button></div>`
                   + `<div class="burbuja">${html}</div>`;
+    const bc = div.querySelector(".copiar-msg");
+    bc.onclick = () => {
+      navigator.clipboard.writeText(div.querySelector(".burbuja").innerText.trim());
+      bc.textContent = "✓ Copiado"; setTimeout(() => bc.textContent = "⧉ Copiar", 1200);
+    };
     trans().appendChild(div); return div;
   }
   let bienvCache = null;

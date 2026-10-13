@@ -217,6 +217,61 @@ def _vuelta_desperdiciada(resultados: List[Dict[str, Any]]) -> bool:
     )
 
 
+def sanear_secuencia_tools(mensajes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Devuelve una copia del historial que SIEMPRE cumple el contrato de la API:
+    cada mensaje 'assistant' con tool_calls va inmediatamente seguido por una
+    respuesta 'tool' por cada id que pidió, en orden, y no hay mensajes 'tool'
+    sueltos.
+
+    Repara las tres formas en que el historial se puede ensuciar (tool-calls en
+    paralelo, una interrupción a mitad de ronda, respuestas que llegan tarde):
+
+    - **Reordena** las respuestas 'tool' para que queden pegadas al 'assistant'
+      que las originó, aunque en el archivo hayan quedado intercaladas o fuera
+      de orden.
+    - **Descarta** los 'tool' huérfanos (sin ningún 'assistant' que los haya
+      pedido): la API los rechaza con un 400 y no hay forma de representarlos.
+    - **Completa** con un resultado de relleno los tool_calls que nunca se
+      respondieron, para que el bloque quede cerrado en vez de romper la llamada.
+
+    No toca los mensajes 'user' ni los 'assistant' de texto: su orden relativo se
+    mantiene intacto. Es idempotente y no modifica la lista original."""
+    # 1) Mapa id -> primera respuesta 'tool' con ese id.
+    respuestas: Dict[str, Dict[str, Any]] = {}
+    for m in mensajes:
+        if m.get('role') == 'tool':
+            tcid = m.get('tool_call_id')
+            if tcid and tcid not in respuestas:
+                respuestas[tcid] = m
+
+    # 2) Recorrido: los 'tool' se re-emiten bajo su 'assistant'; el resto queda igual.
+    salida: List[Dict[str, Any]] = []
+    for m in mensajes:
+        rol = m.get('role')
+        if rol == 'tool':
+            continue  # se re-ubica (o se descarta si es huérfano)
+        if rol == 'assistant' and m.get('tool_calls'):
+            salida.append(m)
+            for tc in m['tool_calls']:
+                tcid = tc.get('id')
+                r = respuestas.get(tcid)
+                if r is not None:
+                    salida.append(r)
+                else:
+                    salida.append({
+                        "role": "tool",
+                        "tool_call_id": tcid,
+                        "content": json.dumps(
+                            {"error": "(sin respuesta: la herramienta no devolvió "
+                                      "resultado, probablemente por una interrupción)"},
+                            ensure_ascii=False),
+                        "ts": m.get("ts", ""),
+                    })
+        else:
+            salida.append(m)
+    return salida
+
+
 class ConversacionChat:
     def __init__(self, conversacion_dir: Path):
         self.conversacion_dir = Path(conversacion_dir)
@@ -372,7 +427,11 @@ class ConversacionChat:
                     continue
             break
 
-        return ventana
+        # Red de seguridad final: deja la secuencia de tool calls siempre válida
+        # (reordena respuestas, descarta 'tool' huérfanos y rellena los que
+        # faltan). Cubre la corrupción en el MEDIO del historial, que el recorte
+        # de principio/fin de arriba no ve.
+        return sanear_secuencia_tools(ventana)
 
     def herramientas_disponibles(self) -> List[str]:
         if not self.tools_habilitadas:

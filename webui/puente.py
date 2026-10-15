@@ -105,7 +105,8 @@ class Puente:
                                                "args": fn.get("arguments", "")}
                 cont = (m.get("content") or "").strip()
                 if cont:
-                    items.append({"tipo": "assistant", "ts": ts, "html": md_a_html(cont)})
+                    items.append({"tipo": "assistant", "ts": ts, "html": md_a_html(cont),
+                                  "segundos": m.get("segundos")})
             elif rol == "tool":
                 meta = meta_tool.get(m.get("tool_call_id"), {})
                 items.append({
@@ -325,7 +326,9 @@ class Puente:
         self._js("chatInicioRespuesta", nombre)
         try:
             respuesta = chat.enviar(
-                texto, al_fragmento=lambda t: self._js("chatFragmento", nombre, t))
+                texto,
+                al_fragmento=lambda t: self._js("chatFragmento", nombre, t),
+                al_evento=lambda ev: self._js("chatHerramienta", nombre, ev))
             # chatFin lleva `pausa`: True si el agente cortó preguntando (para el
             # 'Sí a todo' / el botón de continuar). Recarga la conversación para
             # mostrar las ejecuciones además del texto final.

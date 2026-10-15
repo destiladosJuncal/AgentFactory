@@ -507,11 +507,24 @@ class ConversacionChat:
                 return {"error": f"Argumentos inválidos para iterar_codigo: {e}"}
         return {"error": f"Herramienta desconocida: {nombre}"}
 
-    def enviar(self, texto_usuario: str, al_fragmento=None) -> str:
+    def enviar(self, texto_usuario: str, al_fragmento=None, al_evento=None) -> str:
         """Agrega el mensaje del usuario, llama al modelo (con loop de tools si
-        hace falta), agrega la respuesta final, persiste todo, y la devuelve."""
+        hace falta), agrega la respuesta final, persiste todo, y la devuelve.
+
+        `al_evento`, si viene, se llama con un dict por cada herramienta que el
+        agente corre: {"fase":"inicio"|"fin", "tool", "args"/"resumen", "ok"}.
+        Sirve para mostrar EN VIVO qué está ejecutando (los comandos), no recién
+        al final."""
 
         self.cancelado = False
+        _inicio_turno = time.time()
+
+        def _evento(d):
+            if al_evento:
+                try:
+                    al_evento(d)
+                except Exception:
+                    pass
         # La instancia se reusa entre cambios de conversación, así que el
         # saneo del historial tiene que correr acá y no solo en __init__.
         self._sanitizar_historial_incompleto()
@@ -636,8 +649,13 @@ class ConversacionChat:
                             contexto.append({k: v for k, v in entrada_tool.items() if k != "ts"})
                             continue
 
+                        _evento({"fase": "inicio", "tool": tc.function.name,
+                                 "args": resumen_args(args)})
                         resultado = self._despachar_tool(tc.function.name, args)
                         print(f"   🔧 {tc.function.name}({resumen_args(args)}) -> {resumen_tool(resultado)}")
+                        _evento({"fase": "fin", "tool": tc.function.name,
+                                 "resumen": resumen_tool(resultado),
+                                 "ok": "error" not in resultado})
 
                         entrada_tool = {
                             "role": "tool",
@@ -713,3 +731,10 @@ class ConversacionChat:
             self.mensajes.append({"role": "assistant", "content": texto_final, "ts": _ahora()})
             self._persistir()
             return texto_final
+
+        finally:
+            # Tiempo real del turno (wall-clock, incluye la ejecución de tools):
+            # se guarda en la última respuesta para mostrarlo como "⏱ Ns".
+            if self.mensajes and self.mensajes[-1].get("role") == "assistant":
+                self.mensajes[-1]["segundos"] = round(time.time() - _inicio_turno, 1)
+                self._persistir()

@@ -70,6 +70,12 @@
   .exec pre { margin:0; padding:10px 12px; background:#0f1115; color:#cfe3d8;
               border-radius:0 0 8px 8px; overflow-x:auto; font:12px Menlo,monospace;
               white-space:pre-wrap; word-break:break-word; }
+  .exec .estado { font:12px Menlo,monospace; color:var(--tenue); margin-left:6px; }
+  .exec.vivo { border-color:var(--acento); background:#f6f3ff; }
+  .exec.vivo.err { border-color:var(--error); background:#fff4f3; }
+  .exec.vivo.err .estado { color:var(--error); }
+  .cron { color:var(--tenue); font-weight:400; font-size:11px; margin-left:8px;
+          font-variant-numeric:tabular-nums; }
 
   /* grupo enjambre en la lista */
   .grupo { padding:9px 14px; cursor:pointer; border-bottom:1px solid var(--borde);
@@ -578,7 +584,7 @@
   }
   function pintarItem(it) {
     if (it.tipo === "tool") return pintarTool(it);
-    return pintarMensaje(it.tipo, it.html, it.ts);
+    return pintarMensaje(it.tipo, it.html, it.ts, it.segundos);
   }
   function pintarTool(it) {
     const d = document.createElement("details"); d.className = "exec";
@@ -591,12 +597,14 @@
     const d = new Date(); const p = n => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
-  function pintarMensaje(rol, html, fecha) {
+  function pintarMensaje(rol, html, fecha, segundos) {
     const div = document.createElement("div");
     div.className = "msg " + rol;
     const quien = rol === "user" ? "🧑 Vos" : "● Agente";
     const f = (fecha || "").slice(0, 16);
+    const cron = (segundos != null) ? `⏱ ${segundos}s` : "";
     div.innerHTML = `<div class="quien">${quien}<span class="hora">${escapar(f)}</span>`
+                  + `<span class="cron">${cron}</span>`
                   + `<button class="copiar-msg" title="Copiar toda la respuesta">⧉ Copiar</button></div>`
                   + `<div class="burbuja">${html}</div>`;
     const bc = div.querySelector(".copiar-msg");
@@ -659,10 +667,48 @@
   }
   // Los callbacks llevan el nombre: solo pintan si es la conversación que mirás.
   function chatUsuario(nombre, html) { corriendo.add(nombre); if (nombre === convActual){ pintarMensaje("user", html, ahoraStr()); alFondo(); actualizarBarra(); } }
+  let cronTimer = null, cronInicio = 0, chipHerr = null;
+  function cronArrancar() {
+    cronInicio = Date.now(); cronParar();
+    cronTimer = setInterval(() => {
+      const s = Math.round((Date.now() - cronInicio) / 1000);
+      if (burbujaAgente) { const c = burbujaAgente.querySelector(".cron"); if (c) c.textContent = "⏱ " + s + "s"; }
+    }, 1000);
+  }
+  function cronParar() { if (cronTimer) { clearInterval(cronTimer); cronTimer = null; } }
   function chatInicioRespuesta(nombre) {
     if (nombre !== convActual) return;
     bufferStream = "";
-    burbujaAgente = pintarMensaje("assistant", "<span style='color:#7a808a'>▍</span>", ahoraStr()); alFondo();
+    burbujaAgente = pintarMensaje("assistant", "<span style='color:#7a808a'>▍</span>", ahoraStr());
+    cronArrancar(); alFondo();
+  }
+  // Chip EN VIVO de cada herramienta que corre el agente (los comandos a la vista).
+  function chatHerramienta(nombre, ev) {
+    if (nombre !== convActual) return;
+    if (ev.fase === "inicio") {
+      // Cierra la burbuja de texto actual (sin el cursor) para que el próximo
+      // texto arranque abajo del chip, igual que queda al recargar.
+      if (burbujaAgente) {
+        const b = burbujaAgente.querySelector(".burbuja");
+        if (b) b.textContent = bufferStream;
+        burbujaAgente = null; bufferStream = "";
+      }
+      const d = document.createElement("details"); d.className = "exec vivo";
+      const args = (ev.args || "").replace(/\s+/g, " ").trim().slice(0, 110);
+      d.innerHTML = `<summary>🔧 <b>${escapar(ev.tool || "")}</b> `
+                  + `<span class="args">${escapar(args)}</span>`
+                  + `<span class="estado">▍ ejecutando…</span></summary>`;
+      trans().appendChild(d); chipHerr = d; alFondo();
+    } else if (ev.fase === "fin") {
+      if (chipHerr) {
+        const est = chipHerr.querySelector(".estado");
+        if (est) est.textContent = (ev.ok ? "✓ " : "✗ ") + (ev.resumen || "");
+        chipHerr.classList.remove("vivo");
+        if (!ev.ok) chipHerr.classList.add("vivo", "err");
+        chipHerr = null;
+      }
+      alFondo();
+    }
   }
   function chatFragmento(nombre, t) {
     if (nombre !== convActual) return;
@@ -673,7 +719,7 @@
   }
   async function chatFin(nombre, pausa) {
     corriendo.delete(nombre);
-    if (nombre === convActual){ burbujaAgente = null; await abrirConversacion(nombre); }
+    if (nombre === convActual){ cronParar(); chipHerr = null; burbujaAgente = null; await abrirConversacion(nombre); }
     else refrescarLista();
     actualizarBarra();
     manejarPausa(nombre, pausa);
@@ -681,6 +727,7 @@
   function chatError(nombre, txt) {
     corriendo.delete(nombre);
     if (nombre === convActual){
+      cronParar(); chipHerr = null;
       pintarMensaje("assistant", `<pre style="color:#ff8a8a">${escapar(txt)}</pre>`);
       burbujaAgente = null; alFondo();
     }

@@ -255,7 +255,7 @@ INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
     <key>CFBundleDisplayName</key><string>AgentFactory</string>
     <key>CFBundleIdentifier</key><string>local.agentfactory.app</string>
     <key>CFBundleVersion</key><string>{version}</string>
-    <key>CFBundleShortVersionString</key><string>0.2</string>
+    <key>CFBundleShortVersionString</key><string>0.3</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>AgentFactory</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>

@@ -451,8 +451,24 @@
   let convActual = null, burbujaAgente = null, bufferStream = "", enjambreAbierto = false;
   let convsCache = [], filtroConv = "";
   const corriendo = new Set();            // conversaciones con un turno en curso
+  const necesitanAccion = new Set();      // conversaciones esperando una acción tuya
   const MAX_AUTO = 5;                      // auto-continuaciones por mensaje tuyo
   const autoRestantes = {};               // conv -> cuántas quedan
+  function tituloDe(nombre){ const c = convsCache.find(x => x.nombre === nombre); return c ? c.titulo : nombre; }
+  // Avisa (lista + notificación del sistema) que una conversación espera tu acción.
+  function avisarAccion(nombre, texto){
+    necesitanAccion.add(nombre);
+    renderLista();
+    // Si ya estás mirando esa conversación con la ventana enfocada, no molesto
+    // con la notificación del sistema (ya lo ves en pantalla).
+    const mirandoAhora = (nombre === convActual) && document.hasFocus();
+    if (!mirandoAhora){
+      try { window.pywebview.api.notificar("AgentFactory · " + tituloDe(nombre), texto); } catch(e){}
+    }
+  }
+  function limpiarAccion(nombre){
+    if (necesitanAccion.delete(nombre)) renderLista();
+  }
   const trans = () => $("#trans");
   const autoOn = () => $("#chat-auto").checked;
   function alFondo() { const t = trans(); t.scrollTop = t.scrollHeight; }
@@ -472,8 +488,9 @@
     div.onclick = () => abrirConversacion(c.nombre);
     const icono = (c.crew && !hijo) ? "🤝 " : "";
     const run = corriendo.has(c.nombre) ? "⏳ " : "";
+    const accion = necesitanAccion.has(c.nombre) ? "❗ " : "";
     const fecha = (c.actualizado || c.creado || "").slice(0, 16);   // YYYY-MM-DD HH:MM
-    div.innerHTML = `<div>${run}${icono}${escapar(c.titulo)}</div>`
+    div.innerHTML = `<div>${accion}${run}${icono}${escapar(c.titulo)}</div>`
       + `<div class="n">${fecha ? escapar(fecha) + " · " : ""}${c.mensajes} mensaje(s)</div>`;
     return div;
   }
@@ -508,6 +525,7 @@
   }
   async function abrirConversacion(nombre) {
     convActual = nombre;
+    necesitanAccion.delete(nombre);   // la estás mirando: ya no requiere aviso
     const data = await window.pywebview.api.cargar_conversacion(nombre);
     $("#chat-cab").style.display = "flex";
     $("#chat-titulo").textContent = data.titulo;
@@ -660,13 +678,17 @@
       autoRestantes[nombre] = rest - 1;
       if (nombre === convActual) $("#chat-aviso").textContent = `↻ sigo solo (quedan ${rest - 1} de ${MAX_AUTO})`;
       setTimeout(() => continuarTurno(nombre), 400);
-    } else if (nombre === convActual){
+      return;
+    }
+    // Se frena y necesita tu acción: lo marco en la lista y te notifico.
+    if (nombre === convActual){
       $("#chat-seguir").style.display = "";
       if (autoOn()) $("#chat-aviso").textContent = `⏸ llegué al tope de ${MAX_AUTO}; seguí vos si querés`;
     }
+    avisarAccion(nombre, "El agente está esperando tu respuesta");
   }
   // Los callbacks llevan el nombre: solo pintan si es la conversación que mirás.
-  function chatUsuario(nombre, html) { corriendo.add(nombre); if (nombre === convActual){ pintarMensaje("user", html, ahoraStr()); alFondo(); actualizarBarra(); } }
+  function chatUsuario(nombre, html) { corriendo.add(nombre); limpiarAccion(nombre); if (nombre === convActual){ pintarMensaje("user", html, ahoraStr()); alFondo(); actualizarBarra(); } }
   let cronTimer = null, cronInicio = 0, chipHerr = null;
   function cronArrancar() {
     cronInicio = Date.now(); cronParar();

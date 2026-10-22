@@ -376,6 +376,9 @@ class Puente:
             self._confirm_seq += 1
             cid = f"c{self._confirm_seq}"
             self._confirmaciones[cid] = (evento, caja)
+        from core import plataforma
+        plataforma.notificar("AgentFactory · se requiere tu aprobación",
+                             f"El agente quiere {resumen}")
         self._js("confirmarPedir", cid, resumen, detalle, clave)
         if not evento.wait(timeout=300):
             self._js("confirmarCerrar", cid)
@@ -385,6 +388,13 @@ class Puente:
         with self._confirm_lock:
             self._confirmaciones.pop(cid, None)
         return caja[0] if caja else "no"
+
+    def notificar(self, titulo: str, texto: str) -> Dict[str, Any]:
+        """Notificación del sistema que dispara el front cuando el agente queda
+        esperando una acción de la persona (p. ej. una pausa preguntando)."""
+        from core import plataforma
+        plataforma.notificar(titulo or "AgentFactory", texto or "")
+        return {"ok": True}
 
     def confirmar_responder(self, cid: str, decision: str) -> Dict[str, Any]:
         """El front devuelve la decisión (permitir / siempre / no)."""

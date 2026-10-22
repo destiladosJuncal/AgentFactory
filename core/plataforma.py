@@ -50,19 +50,51 @@ def fuentes() -> Tuple[str, str]:
 
 # --- Notificaciones del sistema ---------------------------------------------
 
+def _icono_notificacion() -> Optional[str]:
+    """Ruta al PNG de la marca, para que la notificación muestre el ícono de
+    AgentFactory (no todos los backends lo soportan)."""
+    try:
+        from core.rutas import dir_app
+        raiz = dir_app()
+        for nombre in ("agentfactory-icon.png", "agentfactory-icon-1024.png", "icono.png"):
+            p = raiz / nombre
+            if p.exists():
+                return str(p)
+    except Exception:
+        pass
+    return None
+
+
 def notificar(titulo: str, texto: str, sonido: bool = True) -> Optional[str]:
     """Muestra una notificación del sistema (fire-and-forget).
 
     Sirve para avisar que el agente necesita una acción tuya aunque la app esté
-    en segundo plano. En Mac usa osascript; en Linux, notify-send si está. No
-    pasa por el shell (los textos van como argumentos), así que un título con
-    comillas no puede ejecutar nada.
+    en segundo plano. No pasa por el shell (los textos van como argumentos), así
+    que un título con comillas no puede ejecutar nada.
+
+    El ícono de AgentFactory se muestra cuando el backend lo permite:
+    - macOS: con `terminal-notifier` (-appIcon). Con el `osascript` de base NO se
+      puede: macOS siempre pone el ícono de quien dispara la notificación. Para
+      el ícono propio sin dependencias haría falta firmar la app.
+    - Linux: `notify-send -i` lo soporta de una.
+    - Windows: todavía no implementado.
     """
+    import shutil
     titulo = (titulo or "AgentFactory").replace("\n", " ")[:120]
     texto = (texto or "").replace("\n", " ")[:240]
+    icono = _icono_notificacion()
     try:
         if ES_MAC:
-            # osascript arma la notificación; se escapan solo las comillas dobles.
+            tn = shutil.which("terminal-notifier")
+            if tn:
+                args = [tn, "-title", titulo, "-message", texto, "-group", "agentfactory"]
+                if icono:
+                    args += ["-appIcon", icono]
+                if sonido:
+                    args += ["-sound", "Glass"]
+                subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return None
+            # Sin terminal-notifier: osascript (muestra el ícono de Script Editor).
             t = texto.replace('"', '\\"')
             tit = titulo.replace('"', '\\"')
             guion = f'display notification "{t}" with title "{tit}"'
@@ -73,8 +105,11 @@ def notificar(titulo: str, texto: str, sonido: bool = True) -> Optional[str]:
         elif ES_WINDOWS:
             return "notificación no implementada en Windows"
         else:
-            subprocess.Popen(["notify-send", titulo, texto],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            args = ["notify-send"]
+            if icono:
+                args += ["-i", icono]
+            args += [titulo, texto]
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return None
     except Exception as e:
         return f"No pude notificar: {e}"

@@ -440,6 +440,16 @@ def ejecutar_shell(comando: str, directorio: str = "", timeout: Any = TIMEOUT_DE
     if error:
         return error
 
+    if not como_admin:
+        # Un 'pip install' por shell se saltearía el almacén compartido y
+        # reinstalaría los mismos paquetes en cada conversación. Lo ruteamos por
+        # install(), que reutiliza lo ya instalado. (Formas complejas -e/-r/URL
+        # devuelven None y siguen al shell normal, acá abajo.)
+        from core import paquetes
+        rerouteado = paquetes.reroutear_pip_install(comando, workspace=base, permisos=permisos)
+        if rerouteado is not None:
+            return rerouteado
+
     if como_admin:
         if not admin_habilitado:
             return {"error": ("Esta conversación no tiene habilitada la ejecución como "

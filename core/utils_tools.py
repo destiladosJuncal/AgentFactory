@@ -64,6 +64,11 @@ def resumen_tool(resultado: Dict[str, Any]) -> str:
             detalle = f": {primera[0][:70]}" if primera else ""
             return f"falló (código {codigo}){detalle}"
         return "ok"
+    if "rerouteado_al_almacen" in resultado:
+        rs = resultado.get("resultados", [])
+        reuso = sum(1 for r in rs if r.get("estado") == "ya_estaba")
+        nuevos = sum(1 for r in rs if r.get("estado") == "instalado")
+        return f"pip→almacén: {reuso} reusado(s), {nuevos} nuevo(s)"
     if "exito" in resultado and "iteraciones" in resultado:
         estado = "✅ resuelto" if resultado["exito"] else "⏸️ sin llegar al umbral"
         return f"{estado} en {resultado['iteraciones']} iteración(es), puntaje {resultado['mejor_puntaje']:.0%}"

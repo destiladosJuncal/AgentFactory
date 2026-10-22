@@ -26,6 +26,7 @@ system — both move in their own later phase.)
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -217,6 +218,79 @@ def install(requirement: str, workspace=None,
     return {"estado": "instalado", "donde": "compartida", "paquete": name,
             "version": installed(shared).get(name, "?"),
             "nota": "queda disponible para todas las conversaciones"}
+
+
+# Flags de 'pip install' que no cambian el destino ni la versión: se pueden
+# ignorar y rutear igual por el almacén compartido.
+_PIP_FLAGS_BENIGNOS = {
+    "-q", "--quiet", "-v", "--verbose", "--no-input",
+    "--disable-pip-version-check", "--no-cache-dir", "--no-color",
+}
+
+
+def reroutear_pip_install(comando: str, workspace=None,
+                          permisos=None) -> Optional[Dict[str, Any]]:
+    """Si `comando` es un 'pip install <paquetes>' simple, lo instala por el
+    almacén COMPARTIDO (vía install(), que deduplica) en vez de dejar que pip lo
+    reinstale por fuera en cada conversación. Devuelve el dict-resultado si lo
+    manejó, o None si el comando no corresponde interceptar (que siga al shell
+    normal).
+
+    Es conservador a propósito: ante cualquier forma que no sepa rutear con
+    seguridad (-e, -r, -U/--upgrade, --target, rutas, .whl, URLs, o comandos
+    encadenados con pipes/&&/;) devuelve None y no toca nada."""
+    txt = (comando or "").strip()
+    if not txt:
+        return None
+    # Un solo comando: nada de encadenar, redirigir ni sustituir.
+    if any(op in txt for op in ("&&", "||", "|", ";", "\n", "`", "$(", ">", "<", "&")):
+        return None
+    try:
+        tokens = shlex.split(txt)
+    except Exception:
+        return None
+    if not tokens:
+        return None
+
+    # Prefijo aceptado: 'pip'/'pip3' o 'python[3] -m pip'.
+    i = 0
+    if tokens[0] in ("python", "python3", "py"):
+        if tokens[1:3] == ["-m", "pip"]:
+            i = 3
+        else:
+            return None
+    elif tokens[0] in ("pip", "pip3"):
+        i = 1
+    else:
+        return None
+
+    if tokens[i:i + 1] != ["install"]:
+        return None
+
+    requisitos: List[str] = []
+    for a in tokens[i + 1:]:
+        if a in _PIP_FLAGS_BENIGNOS:
+            continue
+        if a.startswith("-"):
+            return None  # flag que no sé rutear (-e, -r, -U, --target, -c, …)
+        low = a.lower()
+        if a in (".", "..") or "/" in a or "://" in low \
+                or low.endswith((".whl", ".tar.gz", ".zip", ".egg", ".txt")):
+            return None  # ruta/archivo/URL: que lo maneje el shell
+        requisitos.append(a)
+
+    if not requisitos:
+        return None
+
+    resultados = [install(r, workspace=workspace, permisos=permisos) for r in requisitos]
+    return {
+        "comando": comando,
+        "rerouteado_al_almacen": True,
+        "resultados": resultados,
+        "nota": ("'pip install' se redirigió al almacén COMPARTIDO: no se reinstala "
+                 "lo que ya estaba y lo nuevo queda disponible para todas las "
+                 "conversaciones. Para instalar en un venv aparte usá una ruta/-r/-e."),
+    }
 
 
 def list_installed(workspace=None) -> Dict[str, Any]:

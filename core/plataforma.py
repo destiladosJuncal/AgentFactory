@@ -87,7 +87,10 @@ def notificar(titulo: str, texto: str, sonido: bool = True) -> Optional[str]:
         if ES_MAC:
             tn = shutil.which("terminal-notifier")
             if tn:
-                args = [tn, "-title", titulo, "-message", texto, "-group", "agentfactory"]
+                # -activate: al hacer clic, trae AgentFactory al frente (por su
+                # bundle id). Con osascript esto no se puede.
+                args = [tn, "-title", titulo, "-message", texto,
+                        "-group", "agentfactory", "-activate", "local.agentfactory.app"]
                 if icono:
                     args += ["-appIcon", icono]
                 if sonido:

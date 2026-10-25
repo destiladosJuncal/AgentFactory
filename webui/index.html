@@ -76,6 +76,12 @@
   .exec.vivo.err .estado { color:var(--error); }
   .cron { color:var(--tenue); font-weight:400; font-size:11px; margin-left:8px;
           font-variant-numeric:tabular-nums; }
+  /* menú contextual propio (WKWebView no muestra 'Copiar' de forma confiable) */
+  #ctxmenu { position:fixed; z-index:200; background:#fff; border:1px solid var(--borde);
+             border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.18); padding:4px;
+             min-width:150px; }
+  .ctx-item { padding:7px 14px; font-size:13px; border-radius:6px; cursor:pointer; user-select:none; }
+  .ctx-item:hover { background:#e6e9ff; }
 
   /* grupo enjambre en la lista */
   .grupo { padding:9px 14px; cursor:pointer; border-bottom:1px solid var(--borde);
@@ -982,6 +988,55 @@
   ta.addEventListener("input", () => { ta.style.height="auto"; ta.style.height=Math.min(160,ta.scrollHeight)+"px"; });
   $("#enj-msg").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); enjEnviar(); } });
   $("#conv-buscar").addEventListener("input", (e) => { filtroConv = e.target.value; renderLista(); });
+
+  // ---- Menú contextual propio (Copiar / Cortar / Pegar) -------------------
+  const ctxMenu = document.createElement("div");
+  ctxMenu.id = "ctxmenu"; ctxMenu.style.display = "none";
+  document.body.appendChild(ctxMenu);
+  const ocultarCtx = () => { ctxMenu.style.display = "none"; };
+  function copiarSeleccion(sel){
+    try { if (document.execCommand("copy")) return; } catch(e){}
+    try { navigator.clipboard.writeText(sel); } catch(e){}
+  }
+  async function pegarEnCampo(campo){
+    try {
+      const t = await navigator.clipboard.readText();
+      const a = campo.selectionStart ?? campo.value.length;
+      const b = campo.selectionEnd ?? campo.value.length;
+      campo.focus(); campo.setRangeText(t, a, b, "end");
+      campo.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch(e){}
+  }
+  document.addEventListener("contextmenu", (e) => {
+    const sel = (window.getSelection().toString() || "").trim();
+    const campo = e.target.closest("input, textarea");
+    const items = [];
+    if (sel) items.push({ txt: "Copiar", fn: () => copiarSeleccion(sel) });
+    if (campo) {
+      if (sel) items.push({ txt: "Cortar", fn: () => { try { document.execCommand("cut"); } catch(_){} } });
+      items.push({ txt: "Pegar", fn: () => pegarEnCampo(campo) });
+      if (!sel) items.push({ txt: "Seleccionar todo", fn: () => { campo.focus(); campo.select(); } });
+    }
+    if (!items.length) { ocultarCtx(); return; }   // nada que ofrecer: dejá el menú nativo
+    e.preventDefault();
+    ctxMenu.innerHTML = "";
+    for (const it of items) {
+      const b = document.createElement("div");
+      b.className = "ctx-item"; b.textContent = it.txt;
+      b.onmousedown = (ev) => { ev.preventDefault(); it.fn(); ocultarCtx(); };
+      ctxMenu.appendChild(b);
+    }
+    ctxMenu.style.display = "block";
+    let x = e.clientX, y = e.clientY;
+    const w = ctxMenu.offsetWidth, h = ctxMenu.offsetHeight;
+    if (x + w > innerWidth)  x = innerWidth  - w - 4;
+    if (y + h > innerHeight) y = innerHeight - h - 4;
+    ctxMenu.style.left = x + "px"; ctxMenu.style.top = y + "px";
+  });
+  document.addEventListener("click", ocultarCtx);
+  document.addEventListener("scroll", ocultarCtx, true);
+  window.addEventListener("blur", ocultarCtx);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") ocultarCtx(); });
 
   async function init(){ await refrescarLista(); mostrarBienvenida(); }
   window.addEventListener("pywebviewready", init);

@@ -71,6 +71,11 @@
               border-radius:0 0 8px 8px; overflow-x:auto; font:12px Menlo,monospace;
               white-space:pre-wrap; word-break:break-word; }
   .exec .estado { font:12px Menlo,monospace; color:var(--tenue); margin-left:6px; }
+  .exec.think { border-color:#7c4dff; background:#f6f3ff; }
+  .exec.think summary { color:#7c4dff; font-weight:600; }
+  .exec.think pre { background:#faf8ff; color:#2a2340; }
+  .wtools { padding:4px 12px 0; }
+  .wtool { font:12px Menlo,monospace; color:#0e7490; padding:2px 0; white-space:pre-wrap; word-break:break-word; }
   .exec.vivo { border-color:var(--acento); background:#f6f3ff; }
   .exec.vivo.err { border-color:var(--error); background:#fff4f3; }
   .exec.vivo.err .estado { color:var(--error); }
@@ -926,7 +931,8 @@
   let enjCorriendo = false, enjIniciado = false;
   const enjTrans = () => $("#enj-trans");
   // ---- Orquestador (Opus) + workers (DeepSeek) ----------------------------
-  const orqFilas = {};   // id de sub-tarea -> <details> de su worker
+  const orqFilas = {};    // id de sub-tarea -> <details> de su worker
+  const orqThink = {};    // fase (plan/review/synth) -> <details> de razonamiento de Opus
   function enjBloque(html, cls){
     const d = document.createElement("div");
     d.className = "enjmsg" + (cls ? " " + cls : "");
@@ -934,14 +940,25 @@
     const t = enjTrans(); t.appendChild(d); t.scrollTop = t.scrollHeight;
     return d;
   }
+  const FASE_TXT = {plan:"🧠 Opus · razonando el plan", review:"🧠 Opus · revisando", synth:"🧠 Opus · sintetizando"};
+  function orqBloqueThink(fase){
+    let d = orqThink[fase];
+    if (!d){
+      d = document.createElement("details"); d.className = "exec think"; d.open = true;
+      d.innerHTML = `<summary>${escapar(FASE_TXT[fase] || ("🧠 Opus · " + fase))}</summary><pre></pre>`;
+      orqThink[fase] = d;
+      const t = enjTrans(); t.appendChild(d); t.scrollTop = t.scrollHeight;
+    }
+    return d;
+  }
   function orqFilaWorker(id, objetivo){
     let d = orqFilas[id];
     if (!d){
-      d = document.createElement("details"); d.className = "exec vivo";
+      d = document.createElement("details"); d.className = "exec vivo"; d.open = true;
       d.innerHTML = `<summary>🔧 <b>${escapar(id)}</b> `
                   + `<span class="args">${escapar(objetivo || "")}</span>`
                   + `<span class="estado">▍ corriendo…</span></summary>`
-                  + `<pre></pre>`;
+                  + `<div class="wtools"></div><pre></pre>`;
       orqFilas[id] = d;
       const t = enjTrans(); t.appendChild(d); t.scrollTop = t.scrollHeight;
     }
@@ -959,6 +976,7 @@
     if (!tarea || enjCorriendo) return;
     enjIniciado = true;
     for (const k in orqFilas) delete orqFilas[k];
+    for (const k in orqThink) delete orqThink[k];
     enjTrans().innerHTML = "";
     enjBloque(`<div class="quien" style="color:#7c4dff">🧠 Tarea</div><div class="cuerpo">${escapar(tarea)}</div>`);
     enjSetCorriendo(true);
@@ -976,7 +994,28 @@
   // Evento único del orquestador; despacha por tipo.
   function orqEvento(ev){
     const t = ev.type;
-    if (t === "plan"){
+    if (t === "think"){
+      const d = orqBloqueThink(ev.phase);
+      const pre = d.querySelector("pre"); pre.textContent += ev.text || "";
+      enjTrans().scrollTop = enjTrans().scrollHeight;
+    } else if (t === "worker_think"){
+      const d = orqFilaWorker(ev.id, "");
+      const pre = d.querySelector("pre"); pre.textContent += ev.text || "";
+      enjTrans().scrollTop = enjTrans().scrollHeight;
+    } else if (t === "worker_tool"){
+      const d = orqFilaWorker(ev.id, "");
+      const cont = d.querySelector(".wtools"); const e = ev.ev || {};
+      if (e.fase === "inicio"){
+        const ln = document.createElement("div"); ln.className = "wtool";
+        ln.textContent = "🔧 " + (e.tool || "") + " " + (e.args || "");
+        cont.appendChild(ln);
+      } else if (e.fase === "fin"){
+        const lns = cont.querySelectorAll(".wtool");
+        const ln = lns[lns.length - 1];
+        if (ln) ln.textContent += "  " + (e.ok ? "✓" : "✗") + " " + (e.resumen || "");
+      }
+      enjTrans().scrollTop = enjTrans().scrollHeight;
+    } else if (t === "plan"){
       const items = (ev.subtasks || []).map(s => {
         const dep = (s.depends_on && s.depends_on.length) ? ` <span class="args">(tras ${escapar(s.depends_on.join(", "))})</span>` : "";
         return `<li><b>${escapar(s.id)}</b>: ${escapar(s.objective)}${dep}</li>`;
@@ -992,8 +1031,9 @@
       const d = orqFilaWorker(ev.id, "");
       const est = d.querySelector(".estado");
       if (est) est.textContent = (ev.status === "done" ? "✓ " : "✗ ") + (ev.result || "").slice(0, 80);
-      const pre = d.querySelector("pre"); if (pre) pre.textContent = ev.result || "";
-      d.classList.remove("vivo"); if (ev.status !== "done") d.classList.add("vivo","err");
+      const pre = d.querySelector("pre");           // si no hubo streaming, mostrá el resultado
+      if (pre && !pre.textContent.trim()) pre.textContent = ev.result || "";
+      d.classList.remove("vivo", "err"); if (ev.status !== "done") d.classList.add("err");
     } else if (t === "replan"){
       if (ev.added) enjBloque(`<div class="quien" style="color:#7c4dff">🧠 Opus revisó y agregó ${ev.added} sub-tarea(s)</div>`);
       $("#enj-estado").textContent = "⚙ workers en paralelo…";

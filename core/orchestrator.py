@@ -32,8 +32,9 @@ MAX_ROUNDS = 3
 MAX_SUBTASKS = 8
 MAX_PARALLEL = 4
 
-# LLM seam for the orchestrator: a prompt in, a text reply out.
-OrchestratorLLM = Callable[[str], str]
+# LLM seam for the orchestrator: (prompt, on_token) -> text reply. on_token, when
+# given, receives the reply token-by-token so the UI can show Opus reasoning live.
+OrchestratorLLM = Callable[..., str]
 # Worker seam: (sub-task, context from its dependencies) -> result text.
 WorkerRunner = Callable[["SubTask", Dict[str, str]], str]
 # Progress seam: called with small dicts describing each step, for the UI.
@@ -60,7 +61,8 @@ _PLAN_PROMPT = (
     "sub-tasks that solve it well. Each worker is capable and can run tools "
     "(shell, files, web proxy). Use between 1 and {max} sub-tasks: only as many "
     "as genuinely help.\n\n"
-    "Reply with ONLY a JSON array, no prose. Each item:\n"
+    "First write ONE short sentence with your plan of attack, then output the "
+    "JSON array (and nothing after it). Each item:\n"
     '  {{"id": "<short-slug>", "objective": "<what this worker must do, '
     'self-contained>", "depends_on": ["<id>", ...]}}\n'
     "Use depends_on only when a sub-task truly needs another's output first.\n\n"
@@ -71,7 +73,8 @@ _REVIEW_PROMPT = (
     "You are an orchestrator reviewing your workers' results for this task:\n"
     "{task}\n\n"
     "Sub-tasks and their results so far:\n{results}\n\n"
-    "Decide whether the task is fully solved. Reply with ONLY a JSON object:\n"
+    "Decide whether the task is fully solved. First write ONE short sentence "
+    "with your assessment, then output the JSON object (and nothing after it):\n"
     '  {{"done": <true|false>, '
     '"synthesis": "<if done: the complete final answer for the user>", '
     '"new_subtasks": [{{"id": "...", "objective": "...", "depends_on": []}}]}}\n'
@@ -131,10 +134,23 @@ class Orchestrator:
         except Exception:
             return False
 
+    def _ask(self, prompt: str, phase: Optional[str]) -> str:
+        """Call the orchestrator LLM. When ``phase`` is set, stream its tokens as
+        ``think`` events so the UI shows Opus reasoning live."""
+        on_token = None
+        if phase:
+            def on_token(t):  # noqa: E731 - small local sink
+                self._emit(type="think", phase=phase, text=t)
+        try:
+            return self.plan_llm(prompt, on_token)
+        except TypeError:
+            # A seam that only takes the prompt (e.g. a simple test fake).
+            return self.plan_llm(prompt)
+
     # -- phases --------------------------------------------------------------
 
     def _plan(self, task: str) -> List[SubTask]:
-        reply = self.plan_llm(_PLAN_PROMPT.format(max=self.max_subtasks, task=task))
+        reply = self._ask(_PLAN_PROMPT.format(max=self.max_subtasks, task=task), "plan")
         raw = _extract_json(reply, "[", "]")
         subtasks: List[SubTask] = []
         seen = set()
@@ -191,8 +207,8 @@ class Orchestrator:
         return "\n\n".join(lines)
 
     def _review(self, task: str, subtasks: List[SubTask]) -> Dict[str, Any]:
-        reply = self.plan_llm(_REVIEW_PROMPT.format(
-            task=task, results=self._results_block(subtasks)))
+        reply = self._ask(_REVIEW_PROMPT.format(
+            task=task, results=self._results_block(subtasks)), "review")
         obj = _extract_json(reply, "{", "}")
         if not isinstance(obj, dict):
             # Can't parse a verdict: treat as "not done" so we either add nothing
@@ -201,8 +217,8 @@ class Orchestrator:
         return obj
 
     def _synthesize(self, task: str, subtasks: List[SubTask]) -> str:
-        reply = self.plan_llm(_SYNTH_PROMPT.format(
-            task=task, results=self._results_block(subtasks)))
+        reply = self._ask(_SYNTH_PROMPT.format(
+            task=task, results=self._results_block(subtasks)), "synth")
         return (reply or "").strip()
 
     # -- main loop -----------------------------------------------------------
@@ -282,20 +298,24 @@ def opus_planner(model: Optional[str] = None) -> OrchestratorLLM:
     if model:
         provider.modelo = model
 
-    def ask(prompt: str) -> str:
+    def ask(prompt: str, on_token=None) -> str:
         resp = provider.completar(
-            mensajes=[{"role": "user", "content": prompt}], temperature=0.2)
+            mensajes=[{"role": "user", "content": prompt}], temperature=0.2,
+            al_fragmento=on_token)
         return resp.texto or ""
     return ask
 
 
 def deepseek_worker_runner(tools: bool = True,
                            worker_provider: str = "deepseek",
-                           registry: Optional[list] = None) -> WorkerRunner:
+                           registry: Optional[list] = None,
+                           on_event: Optional[Callable[[str, str, Any], None]] = None) -> WorkerRunner:
     """Each sub-task runs as a DeepSeek agent (its own conversation, full tool
     loop and confirmation guard when ``tools`` is on). Returns the worker's final
     text. If ``registry`` is given, each worker's chat is appended to it so the
-    caller can cancel in-flight workers."""
+    caller can cancel in-flight workers. If ``on_event`` is given, it receives
+    (sub_id, kind, data): kind "think" with each streamed token, and kind "tool"
+    with each tool event — so the UI can show the worker's reasoning live."""
     from core.conversaciones import GestorConversaciones
     from core.chat import ConversacionChat
     from core.proveedores import crear_proveedor
@@ -319,5 +339,7 @@ def deepseek_worker_runner(tools: bool = True,
                 f"- [{k}] {v[:1500]}" for k, v in context.items())
         prompt = (f"You are a worker agent. Do exactly this and report the "
                   f"result concretely:\n\n{sub.objective}{ctx}")
-        return chat.enviar(prompt)
+        al_fragmento = (lambda t: on_event(sub.id, "think", t)) if on_event else None
+        al_evento = (lambda ev: on_event(sub.id, "tool", ev)) if on_event else None
+        return chat.enviar(prompt, al_fragmento=al_fragmento, al_evento=al_evento)
     return run

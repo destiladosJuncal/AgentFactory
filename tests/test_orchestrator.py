@@ -108,6 +108,31 @@ def test_plan_invalido_cae_a_un_worker():
     assert len(reg) == 1             # un solo worker con la tarea completa
 
 
+def test_streaming_de_razonamiento_del_gestor():
+    # Un orquestador que streamea tokens vía on_token: deben salir eventos 'think'
+    # con la fase correspondiente (plan / review / synth).
+    class OrqStream:
+        def __init__(self):
+            self.rev = [{"done": False, "new_subtasks": []}]  # fuerza síntesis final
+        def __call__(self, prompt, on_token=None):
+            if "Break the task" in prompt:
+                if on_token: on_token("pienso el plan…")
+                return json.dumps([{"id": "a", "objective": "A"}])
+            if "reviewing your workers" in prompt:
+                if on_token: on_token("reviso…")
+                return json.dumps(self.rev.pop(0) if self.rev else {"done": True})
+            if "Write the final answer" in prompt:
+                if on_token: on_token("sintetizo…")
+                return "LISTO"
+            return "{}"
+    fases = []
+    o = Orchestrator(plan_llm=OrqStream(), run_worker=hacer_worker([]), max_rounds=1,
+                     progress=lambda ev: fases.append(ev.get("phase")) if ev["type"] == "think" else None)
+    out = o.run("tarea")
+    assert out == "LISTO"
+    assert "plan" in fases and "review" in fases and "synth" in fases
+
+
 def test_progreso_emite_eventos():
     eventos = []
     orq = FakeOrq(plan=[{"id": "a", "objective": "A"}],

@@ -522,8 +522,13 @@ class Puente:
                          f"No pude activar el orquestador (Opus): {e}. "
                          f"Revisá ANTHROPIC_API_KEY en Config.")
                 return
+            def _ev_worker(wid, kind, data):
+                if kind == "think":
+                    self._js("orqEvento", {"type": "worker_think", "id": wid, "text": data})
+                else:
+                    self._js("orqEvento", {"type": "worker_tool", "id": wid, "ev": data})
             run_worker = orq.deepseek_worker_runner(
-                tools=con_tools, registry=self._workers_activos)
+                tools=con_tools, registry=self._workers_activos, on_event=_ev_worker)
             motor = orq.Orchestrator(
                 plan_llm, run_worker, max_subtasks=maxi,
                 progress=lambda ev: self._js("orqEvento", ev),

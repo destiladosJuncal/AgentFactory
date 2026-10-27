@@ -289,11 +289,13 @@ def opus_planner(model: Optional[str] = None) -> OrchestratorLLM:
     return ask
 
 
-def deepseek_worker_runner(progress: Optional[Progress] = None,
-                           should_stop: Optional[Callable[[], bool]] = None,
-                           worker_provider: str = "deepseek") -> WorkerRunner:
-    """Each sub-task runs as a DeepSeek agent WITH tools (its own conversation,
-    full tool loop and confirmation guard). Returns the worker's final text."""
+def deepseek_worker_runner(tools: bool = True,
+                           worker_provider: str = "deepseek",
+                           registry: Optional[list] = None) -> WorkerRunner:
+    """Each sub-task runs as a DeepSeek agent (its own conversation, full tool
+    loop and confirmation guard when ``tools`` is on). Returns the worker's final
+    text. If ``registry`` is given, each worker's chat is appended to it so the
+    caller can cancel in-flight workers."""
     from core.conversaciones import GestorConversaciones
     from core.chat import ConversacionChat
     from core.proveedores import crear_proveedor
@@ -307,10 +309,10 @@ def deepseek_worker_runner(progress: Optional[Progress] = None,
             chat.proveedor = crear_proveedor(worker_provider)
         except Exception:
             pass  # fall back to whatever the chat defaults to
-        if should_stop is not None:
-            # Let a global stop also cancel the worker's tool loop.
-            orig = chat.cancelado
-            chat.cancelado = orig
+        if hasattr(chat, "tools_habilitadas"):
+            chat.tools_habilitadas = bool(tools)
+        if registry is not None:
+            registry.append(chat)
         ctx = ""
         if context:
             ctx = "\n\nContext from earlier sub-tasks:\n" + "\n".join(

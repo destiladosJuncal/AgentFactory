@@ -34,7 +34,7 @@ class Puente:
         self.gestor = GestorConversaciones()
         self._chats: Dict[str, ConversacionChat] = {}
         self.window = None            # se setea después de create_window
-        self._room = None             # enjambre activo
+        self._workers_activos = []    # chats de workers del orquestador en vuelo
         self._enjambre_cancelado = False
         self._proxy = None            # captura (mitmproxy)
         self._almacen = None
@@ -496,61 +496,51 @@ class Puente:
 
     # -- enjambre (multi-agente) -------------------------------------------
 
-    def _emitir_msg(self, m):
-        self._js("enjambreMensaje",
-                 {"speaker": m.speaker, "text": m.text, "audience": m.audience})
 
-    def enjambre_iniciar(self, tarea: str, max_agents: int = 4,
-                         con_tools: bool = False) -> Dict[str, Any]:
+    def enjambre_iniciar(self, tarea: str, max_agents: int = 6,
+                         con_tools: bool = True) -> Dict[str, Any]:
+        """Lanza el orquestador (Opus gestiona) sobre la tarea. Opus planifica,
+        los workers DeepSeek resuelven en paralelo (con herramientas), Opus revisa
+        y re-planifica hasta cerrar, y sintetiza."""
         tarea = (tarea or "").strip()
         if not tarea:
             return {"ok": False}
         self._enjambre_cancelado = False
-        self._room = None
-        threading.Thread(target=self._worker_enjambre_kickoff,
+        self._workers_activos = []
+        threading.Thread(target=self._worker_orquestador,
                          args=(tarea, int(max_agents), bool(con_tools)),
                          daemon=True).start()
         return {"ok": True}
 
-    def _worker_enjambre_kickoff(self, tarea, maxi, con_tools):
+    def _worker_orquestador(self, tarea, maxi, con_tools):
         try:
-            from core import crew as crewmod
-            self._js("enjambreEstado", "🧠 Planificando equipo…")
-            specs = crewmod.plan_team(tarea, max_agents=maxi)
-            self._js("enjambreEquipo",
-                     [{"name": s.name, "role": s.role, "goal": s.goal} for s in specs])
-            agentes = crewmod.build_crew(specs, tools_enabled=con_tools).agents
-            self._room = crewmod.Room(agentes)
-            self._room.kickoff(tarea, progress=self._emitir_msg,
-                               should_stop=lambda: self._enjambre_cancelado)
-            self._js("enjambreFin")
+            from core import orchestrator as orq
+            try:
+                plan_llm = orq.opus_planner()   # usa ANTHROPIC_MODEL (Opus) del .env
+            except Exception as e:
+                self._js("orqError",
+                         f"No pude activar el orquestador (Opus): {e}. "
+                         f"Revisá ANTHROPIC_API_KEY en Config.")
+                return
+            run_worker = orq.deepseek_worker_runner(
+                tools=con_tools, registry=self._workers_activos)
+            motor = orq.Orchestrator(
+                plan_llm, run_worker, max_subtasks=maxi,
+                progress=lambda ev: self._js("orqEvento", ev),
+                should_stop=lambda: self._enjambre_cancelado)
+            motor.run(tarea)
+            self._js("orqFin")
         except Exception:
-            self._js("enjambreError", traceback.format_exc())
-
-    def enjambre_mensaje(self, texto: str) -> Dict[str, Any]:
-        if self._room is None:
-            return {"ok": False}
-        self._enjambre_cancelado = False
-        threading.Thread(target=self._worker_enjambre_msg, args=(texto,),
-                         daemon=True).start()
-        return {"ok": True}
-
-    def _worker_enjambre_msg(self, texto):
-        try:
-            self._room.user_message(texto, progress=self._emitir_msg,
-                                    should_stop=lambda: self._enjambre_cancelado)
-            self._js("enjambreFin")
-        except Exception:
-            self._js("enjambreError", traceback.format_exc())
+            self._js("orqError", traceback.format_exc())
 
     def enjambre_detener(self) -> Dict[str, Any]:
         self._enjambre_cancelado = True
-        if self._room is not None:
-            for a in self._room.agents:
-                try:
-                    a.cancel()
-                except Exception:
-                    pass
+        # Cortar también el tool-loop de los workers en vuelo.
+        for chat in getattr(self, "_workers_activos", []):
+            try:
+                chat.cancelado = True
+            except Exception:
+                pass
         return {"ok": True}
 
     # -- captura (proxy + Firefox) -----------------------------------------

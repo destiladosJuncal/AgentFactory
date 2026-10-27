@@ -300,19 +300,19 @@
     <section class="vista" id="vista-agentes">
       <div id="enjambre-main">
         <div id="enj-config">
-          <textarea id="enj-tarea" rows="2" placeholder="Tarea para el enjambre… (un planner infiere cuántos agentes hacen falta)"></textarea>
+          <textarea id="enj-tarea" rows="2" placeholder="Tarea para el orquestador… Opus la descompone y reparte a workers DeepSeek en paralelo."></textarea>
           <div class="enj-row">
-            <label>Máx. agentes <input id="enj-max" type="number" value="4" min="1" max="6"></label>
-            <label><input id="enj-tools" type="checkbox"> con herramientas</label>
-            <button id="enj-iniciar" onclick="enjIniciar()">▶ Iniciar enjambre</button>
+            <label>Máx. sub-tareas <input id="enj-max" type="number" value="6" min="1" max="8"></label>
+            <label><input id="enj-tools" type="checkbox" checked> workers con herramientas</label>
+            <button id="enj-iniciar" onclick="enjIniciar()">▶ Iniciar orquestador</button>
             <button id="enj-detener" onclick="enjDetener()" disabled>⏹ Detener</button>
             <span id="enj-estado"></span>
           </div>
         </div>
-        <div id="enj-trans"><p class="vacio">Escribí una tarea y dale a Iniciar. Los agentes colaboran acá; vos también podés escribir (usá @Nombre para hablarle a uno solo).</p></div>
+        <div id="enj-trans"><p class="vacio">🧠 <b>Orquestador (Opus) · workers (DeepSeek)</b>. Escribí una tarea y dale a Iniciar: Opus la descompone en sub-tareas, los workers las resuelven en paralelo (con herramientas), y Opus revisa y sintetiza el resultado final.</p></div>
         <div id="enj-barra">
-          <input id="enj-msg" placeholder="Escribí… @Nombre para uno solo, o sin @ para todos" disabled>
-          <button id="enj-enviar" onclick="enjEnviar()" disabled>Enviar</button>
+          <input id="enj-msg" placeholder="Otra tarea para el orquestador…">
+          <button id="enj-enviar" onclick="enjEnviar()">▶ Nueva</button>
         </div>
       </div>
     </section>
@@ -923,61 +923,89 @@
   }
 
   // ===================== ENJAMBRE =====================
-  const ENJ_PALETA = ["#0f7b4f","#b4530a","#7b2ff7","#0e7490","#9d174d","#4d7c0f"];
-  let enjColores = {}, enjPalIdx = 0, enjCorriendo = false, enjIniciado = false;
+  let enjCorriendo = false, enjIniciado = false;
   const enjTrans = () => $("#enj-trans");
-  function enjTag(speaker){
-    if (speaker === "user") return "#1a56db";
-    if (speaker === "system") return "#7a808a";
-    if (!(speaker in enjColores)) enjColores[speaker] = ENJ_PALETA[enjPalIdx++ % ENJ_PALETA.length];
-    return enjColores[speaker];
+  // ---- Orquestador (Opus) + workers (DeepSeek) ----------------------------
+  const orqFilas = {};   // id de sub-tarea -> <details> de su worker
+  function enjBloque(html, cls){
+    const d = document.createElement("div");
+    d.className = "enjmsg" + (cls ? " " + cls : "");
+    d.innerHTML = html;
+    const t = enjTrans(); t.appendChild(d); t.scrollTop = t.scrollHeight;
+    return d;
   }
-  function enjPintar(m){
-    const div = document.createElement("div");
-    const priv = m.audience && m.audience !== "all";
-    div.className = "enjmsg" + (priv ? " priv" : "");
-    let quien;
-    if (m.speaker === "user") quien = "🧑 Vos" + (priv ? " → @"+m.audience : "");
-    else if (m.speaker === "system") quien = "⚙ sistema";
-    else quien = "● " + m.speaker + (priv ? "  (privado de @"+m.audience+")" : "");
-    div.innerHTML = `<div class="quien" style="color:${enjTag(m.speaker)}">${escapar(quien)}</div>`
-                  + `<div class="cuerpo">${escapar(m.text)}</div>`;
-    const t = enjTrans(); t.appendChild(div); t.scrollTop = t.scrollHeight;
+  function orqFilaWorker(id, objetivo){
+    let d = orqFilas[id];
+    if (!d){
+      d = document.createElement("details"); d.className = "exec vivo";
+      d.innerHTML = `<summary>🔧 <b>${escapar(id)}</b> `
+                  + `<span class="args">${escapar(objetivo || "")}</span>`
+                  + `<span class="estado">▍ corriendo…</span></summary>`
+                  + `<pre></pre>`;
+      orqFilas[id] = d;
+      const t = enjTrans(); t.appendChild(d); t.scrollTop = t.scrollHeight;
+    }
+    return d;
   }
   function enjSetCorriendo(f){
     enjCorriendo = f;
     $("#enj-iniciar").disabled = f;
     $("#enj-detener").disabled = !f;
-    const puede = !f && enjIniciado;
-    $("#enj-msg").disabled = !puede;
-    $("#enj-enviar").disabled = !puede;
-    if (puede) $("#enj-msg").focus();
+    $("#enj-enviar").disabled = f;
+    $("#enj-msg").disabled = f;
   }
   function enjIniciar(){
     const tarea = $("#enj-tarea").value.trim();
     if (!tarea || enjCorriendo) return;
-    enjColores = {}; enjPalIdx = 0; enjIniciado = true;
+    enjIniciado = true;
+    for (const k in orqFilas) delete orqFilas[k];
     enjTrans().innerHTML = "";
+    enjBloque(`<div class="quien" style="color:#7c4dff">🧠 Tarea</div><div class="cuerpo">${escapar(tarea)}</div>`);
     enjSetCorriendo(true);
-    $("#enj-estado").textContent = "planificando…";
-    window.pywebview.api.enjambre_iniciar(tarea, parseInt($("#enj-max").value) || 4, $("#enj-tools").checked);
+    $("#enj-estado").textContent = "🧠 Opus planificando…";
+    window.pywebview.api.enjambre_iniciar(tarea, parseInt($("#enj-max").value) || 6, $("#enj-tools").checked);
   }
   function enjEnviar(){
     const inp = $("#enj-msg"); const t = inp.value.trim();
     if (!t || enjCorriendo) return;
-    inp.value = ""; enjSetCorriendo(true);
-    $("#enj-estado").textContent = "respondiendo…";
-    window.pywebview.api.enjambre_mensaje(t);
+    $("#enj-tarea").value = t; inp.value = "";
+    enjIniciar();
   }
   function enjDetener(){ $("#enj-estado").textContent = "deteniendo…"; window.pywebview.api.enjambre_detener(); }
-  function enjambreEstado(txt){ $("#enj-estado").textContent = txt; }
-  function enjambreEquipo(specs){
-    for (const s of specs) enjTag(s.name);
-    enjPintar({speaker:"system", text:"🧩 Equipo: " + specs.map(s=>s.name+" ("+s.role+")").join(", "), audience:"all"});
+
+  // Evento único del orquestador; despacha por tipo.
+  function orqEvento(ev){
+    const t = ev.type;
+    if (t === "plan"){
+      const items = (ev.subtasks || []).map(s => {
+        const dep = (s.depends_on && s.depends_on.length) ? ` <span class="args">(tras ${escapar(s.depends_on.join(", "))})</span>` : "";
+        return `<li><b>${escapar(s.id)}</b>: ${escapar(s.objective)}${dep}</li>`;
+      }).join("");
+      enjBloque(`<div class="quien" style="color:#7c4dff">🧩 Plan de Opus · ${(ev.subtasks||[]).length} sub-tarea(s)</div>`
+              + `<ul class="orq-plan">${items}</ul>`);
+      $("#enj-estado").textContent = "⚙ workers en paralelo…";
+    } else if (t === "round"){
+      $("#enj-estado").textContent = "⚙ ola: " + (ev.running || []).join(", ");
+    } else if (t === "worker_start"){
+      orqFilaWorker(ev.id, ev.objective);
+    } else if (t === "worker_done"){
+      const d = orqFilaWorker(ev.id, "");
+      const est = d.querySelector(".estado");
+      if (est) est.textContent = (ev.status === "done" ? "✓ " : "✗ ") + (ev.result || "").slice(0, 80);
+      const pre = d.querySelector("pre"); if (pre) pre.textContent = ev.result || "";
+      d.classList.remove("vivo"); if (ev.status !== "done") d.classList.add("vivo","err");
+    } else if (t === "replan"){
+      if (ev.added) enjBloque(`<div class="quien" style="color:#7c4dff">🧠 Opus revisó y agregó ${ev.added} sub-tarea(s)</div>`);
+      $("#enj-estado").textContent = "⚙ workers en paralelo…";
+    } else if (t === "done"){
+      enjBloque(`<div class="quien" style="color:#0f7b4f">✅ Síntesis de Opus</div>`
+              + `<div class="cuerpo">${md_a_html_cliente(ev.synthesis || "")}</div>`, "sintesis");
+      $("#enj-estado").textContent = "";
+    }
   }
-  function enjambreMensaje(m){ enjPintar(m); }
-  function enjambreFin(){ enjSetCorriendo(false); $("#enj-estado").textContent=""; }
-  function enjambreError(txt){ enjPintar({speaker:"system", text:"❌ "+txt, audience:"all"}); enjSetCorriendo(false); }
+  function md_a_html_cliente(txt){ return escapar(txt).replace(/\n/g, "<br>"); }
+  function orqFin(){ enjSetCorriendo(false); if($("#enj-estado").textContent.indexOf("✅")<0 && $("#enj-estado").textContent.indexOf("Error")<0) $("#enj-estado").textContent=""; }
+  function orqError(txt){ enjBloque(`<div class="quien" style="color:#b42318">❌ Error</div><div class="cuerpo">${escapar(txt)}</div>`); enjSetCorriendo(false); $("#enj-estado").textContent="Error"; }
 
   // ---- utilidades ----
   function escapar(s){ const d=document.createElement("div"); d.textContent=s??""; return d.innerHTML; }

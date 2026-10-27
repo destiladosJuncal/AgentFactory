@@ -133,6 +133,40 @@ def test_streaming_de_razonamiento_del_gestor():
     assert "plan" in fases and "review" in fases and "synth" in fases
 
 
+def test_fraccionado_enriquece_el_plan():
+    # Con fractioner que devuelve 2 partes: se emite 'fraction' y el prompt del
+    # plan incluye esas partes (Opus recibe algo prolijo).
+    prompts = []
+    class OrqSpy:
+        def __call__(self, prompt, on_token=None):
+            prompts.append(prompt)
+            if "Break the task" in prompt:
+                return json.dumps([{"id": "a", "objective": "A"}])
+            if "reviewing your workers" in prompt:
+                return json.dumps({"done": True, "synthesis": "OK"})
+            return "{}"
+    eventos = []
+    o = Orchestrator(plan_llm=OrqSpy(), run_worker=hacer_worker([]),
+                     fractioner=lambda t: ["parte uno", "parte dos"],
+                     progress=lambda ev: eventos.append(ev))
+    o.run("hacé A y también B")
+    frac = [e for e in eventos if e["type"] == "fraction"]
+    assert frac and frac[0]["parts"] == ["parte uno", "parte dos"]
+    plan_prompt = next(p for p in prompts if "Break the task" in p)
+    assert "parte uno" in plan_prompt and "parte dos" in plan_prompt
+
+
+def test_fraccionado_una_sola_parte_no_fracciona():
+    eventos = []
+    o = Orchestrator(plan_llm=FakeOrq(plan=[{"id": "a", "objective": "A"}],
+                                      reviews=[{"done": True, "synthesis": "OK"}]),
+                     run_worker=hacer_worker([]),
+                     fractioner=lambda t: ["una sola cosa"],
+                     progress=lambda ev: eventos.append(ev))
+    o.run("tarea simple")
+    assert not [e for e in eventos if e["type"] == "fraction"]
+
+
 def test_progreso_emite_eventos():
     eventos = []
     orq = FakeOrq(plan=[{"id": "a", "objective": "A"}],

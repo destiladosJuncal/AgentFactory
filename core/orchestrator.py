@@ -109,6 +109,7 @@ class Orchestrator:
     def __init__(self, plan_llm: OrchestratorLLM, run_worker: WorkerRunner,
                  max_rounds: int = MAX_ROUNDS, max_subtasks: int = MAX_SUBTASKS,
                  max_parallel: int = MAX_PARALLEL,
+                 fractioner: Optional[Callable[[str], List[str]]] = None,
                  progress: Optional[Progress] = None,
                  should_stop: Optional[Callable[[], bool]] = None):
         self.plan_llm = plan_llm
@@ -116,6 +117,7 @@ class Orchestrator:
         self.max_rounds = max(1, int(max_rounds))
         self.max_subtasks = max(1, int(max_subtasks))
         self.max_parallel = max(1, int(max_parallel))
+        self.fractioner = fractioner
         self._progress = progress
         self._should_stop = should_stop or (lambda: False)
 
@@ -238,9 +240,27 @@ class Orchestrator:
             for s in ready:
                 done[s.id] = s.result
 
+    def _fraction(self, task: str) -> str:
+        """Pre-step: split a tangled, multi-part request into atomic parts and
+        hand the orchestrator a tidy, enumerated version to plan over. Keeps the
+        original task for review/synthesis. A single-part request is left as-is."""
+        if not self.fractioner:
+            return task
+        try:
+            parts = [p.strip() for p in (self.fractioner(task) or []) if p and p.strip()]
+        except Exception:
+            parts = []
+        if len(parts) <= 1:
+            return task  # nothing to untangle
+        self._emit(type="fraction", parts=parts)
+        enumerated = "\n".join(f"{i + 1}. {p}" for i, p in enumerate(parts))
+        return (f"{task}\n\nThe request breaks down into these parts:\n"
+                f"{enumerated}\n\nPlan sub-tasks that together cover all parts.")
+
     def run(self, task: str) -> str:
         self._emit(type="start", task=task)
-        subtasks = self._plan(task)
+        planning_task = self._fraction(task)
+        subtasks = self._plan(planning_task)
         self._emit(type="plan", subtasks=[s.as_dict() for s in subtasks])
         done: Dict[str, str] = {}
 
@@ -304,6 +324,23 @@ def opus_planner(model: Optional[str] = None) -> OrchestratorLLM:
             al_fragmento=on_token)
         return resp.texto or ""
     return ask
+
+
+def default_fractioner(minimo: int = 1) -> Callable[[str], List[str]]:
+    """Fraccionador por defecto: usa core.procesador para partir el pedido en
+    preguntas/partes atómicas (LLM + fallback por reglas). minimo bajo para no
+    inflar un pedido que ya es una sola cosa."""
+    from core import procesador
+
+    def frac(task: str) -> List[str]:
+        try:
+            return procesador.descomponer(task, minimo=minimo)
+        except Exception:
+            try:
+                return procesador.descomponer_local(task, minimo)
+            except Exception:
+                return [task]
+    return frac
 
 
 def deepseek_worker_runner(tools: bool = True,

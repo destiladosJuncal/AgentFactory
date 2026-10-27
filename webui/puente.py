@@ -498,21 +498,22 @@ class Puente:
 
 
     def enjambre_iniciar(self, tarea: str, max_agents: int = 6,
-                         con_tools: bool = True) -> Dict[str, Any]:
-        """Lanza el orquestador (Opus gestiona) sobre la tarea. Opus planifica,
-        los workers DeepSeek resuelven en paralelo (con herramientas), Opus revisa
-        y re-planifica hasta cerrar, y sintetiza."""
+                         con_tools: bool = True, fraccionar: bool = True) -> Dict[str, Any]:
+        """Lanza el orquestador (Opus gestiona) sobre la tarea. Si `fraccionar`,
+        primero parte el pedido en partes atómicas (así Opus recibe algo prolijo).
+        Opus planifica, los workers DeepSeek resuelven en paralelo (con
+        herramientas), Opus revisa y re-planifica hasta cerrar, y sintetiza."""
         tarea = (tarea or "").strip()
         if not tarea:
             return {"ok": False}
         self._enjambre_cancelado = False
         self._workers_activos = []
         threading.Thread(target=self._worker_orquestador,
-                         args=(tarea, int(max_agents), bool(con_tools)),
+                         args=(tarea, int(max_agents), bool(con_tools), bool(fraccionar)),
                          daemon=True).start()
         return {"ok": True}
 
-    def _worker_orquestador(self, tarea, maxi, con_tools):
+    def _worker_orquestador(self, tarea, maxi, con_tools, fraccionar=True):
         try:
             from core import orchestrator as orq
             try:
@@ -531,6 +532,7 @@ class Puente:
                 tools=con_tools, registry=self._workers_activos, on_event=_ev_worker)
             motor = orq.Orchestrator(
                 plan_llm, run_worker, max_subtasks=maxi,
+                fractioner=orq.default_fractioner() if fraccionar else None,
                 progress=lambda ev: self._js("orqEvento", ev),
                 should_stop=lambda: self._enjambre_cancelado)
             motor.run(tarea)

@@ -309,6 +309,7 @@
           <div class="enj-row">
             <label>Máx. sub-tareas <input id="enj-max" type="number" value="6" min="1" max="8"></label>
             <label><input id="enj-tools" type="checkbox" checked> workers con herramientas</label>
+            <label><input id="enj-frac" type="checkbox" checked> fraccionar la tarea</label>
             <button id="enj-iniciar" onclick="enjIniciar()">▶ Iniciar orquestador</button>
             <button id="enj-detener" onclick="enjDetener()" disabled>⏹ Detener</button>
             <span id="enj-estado"></span>
@@ -981,7 +982,7 @@
     enjBloque(`<div class="quien" style="color:#7c4dff">🧠 Tarea</div><div class="cuerpo">${escapar(tarea)}</div>`);
     enjSetCorriendo(true);
     $("#enj-estado").textContent = "🧠 Opus planificando…";
-    window.pywebview.api.enjambre_iniciar(tarea, parseInt($("#enj-max").value) || 6, $("#enj-tools").checked);
+    window.pywebview.api.enjambre_iniciar(tarea, parseInt($("#enj-max").value) || 6, $("#enj-tools").checked, $("#enj-frac").checked);
   }
   function enjEnviar(){
     const inp = $("#enj-msg"); const t = inp.value.trim();
@@ -1015,6 +1016,11 @@
         if (ln) ln.textContent += "  " + (e.ok ? "✓" : "✗") + " " + (e.resumen || "");
       }
       enjTrans().scrollTop = enjTrans().scrollHeight;
+    } else if (t === "fraction"){
+      const items = (ev.parts || []).map(p => `<li>${escapar(p)}</li>`).join("");
+      enjBloque(`<div class="quien" style="color:#b4530a">✂️ Pedido fraccionado · ${(ev.parts||[]).length} parte(s)</div>`
+              + `<ul class="orq-plan">${items}</ul>`);
+      $("#enj-estado").textContent = "🧠 Opus planificando…";
     } else if (t === "plan"){
       const items = (ev.subtasks || []).map(s => {
         const dep = (s.depends_on && s.depends_on.length) ? ` <span class="args">(tras ${escapar(s.depends_on.join(", "))})</span>` : "";

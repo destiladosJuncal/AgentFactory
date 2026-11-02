@@ -854,12 +854,20 @@
     const campos = await window.pywebview.api.config_campos();
     const cont = $("#cfg-campos"); cont.innerHTML = ""; cfgInicial = {};
     for (const c of campos) {
+      // Valor almacenado (para detectar cambios). El input puede mostrar un
+      // default precargado aunque el almacenado esté vacío: así al Guardar se
+      // persiste. Y los campos con opciones son un combo EDITABLE (datalist).
       cfgInicial[c.clave] = c.secreto ? "" : (c.valor || "");
       const row = document.createElement("div"); row.className = "campo";
-      const ph = c.secreto ? (c.tiene ? c.valor + "  (dejá en blanco para conservar)" : "—") : "";
-      row.innerHTML = `<label>${escapar(c.etiqueta)}</label>`
-        + `<input data-clave="${c.clave}" type="${c.secreto ? "password" : "text"}" `
-        + `value="${c.secreto ? "" : escapAttr(c.valor || "")}" placeholder="${escapAttr(ph)}">`;
+      const ph = c.secreto ? (c.tiene ? c.valor + "  (dejá en blanco para conservar)" : "—") : (c.default || "");
+      const val = c.secreto ? "" : escapAttr(c.valor || c.default || "");
+      const combo = !c.secreto && Array.isArray(c.opciones) && c.opciones.length;
+      const listId = "dl-" + c.clave;
+      let input = `<input data-clave="${c.clave}" type="${c.secreto ? "password" : "text"}" `
+        + `value="${val}" placeholder="${escapAttr(ph)}"` + (combo ? ` list="${listId}"` : "") + `>`;
+      if (combo) input += `<datalist id="${listId}">`
+        + c.opciones.map(o => `<option value="${escapAttr(o)}">`).join("") + `</datalist>`;
+      row.innerHTML = `<label>${escapar(c.etiqueta)}</label>` + input;
       cont.appendChild(row);
     }
     $("#cfg-estado").textContent = "";

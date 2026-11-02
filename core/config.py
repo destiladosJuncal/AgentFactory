@@ -40,6 +40,17 @@ CAMPOS: List[Tuple[str, str, bool]] = [
 
 CLAVES_SECRETAS = {c for c, _, secreto in CAMPOS if secreto}
 
+# Valores precargados y combos editables para algunos campos. `default` se
+# muestra ya cargado cuando el campo está vacío; `opciones` arma un desplegable
+# del que se puede elegir, pero igual se puede escribir otro valor (por si en el
+# futuro cambia el modelo/endpoint). Mantener el default en sync con
+# core/classifier.py (TYPESAFE_MODEL_DEFAULT / TYPESAFE_URL_DEFAULT).
+SUGERENCIAS: Dict[str, Dict[str, Any]] = {
+    "TYPESAFE_MODEL": {"default": "jev-latest",
+                       "opciones": ["jev-latest", "jev-preview", "jev-1.13"]},
+    "TYPESAFE_API_URL": {"default": "https://api.typesafe.ai/v1/systemone"},
+}
+
 
 def enmascarar(valor: str) -> str:
     """'sk-abc...xyz1234' -> 'sk-a••••••1234'. Nunca muestra el medio."""

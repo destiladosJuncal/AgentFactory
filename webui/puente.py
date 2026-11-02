@@ -424,12 +424,16 @@ class Puente:
         from core import config
         valores = config.leer()
         campos = []
+        sugerencias = getattr(config, "SUGERENCIAS", {})
         for clave, etiqueta, secreto in config.CAMPOS:
             v = valores.get(clave, "")
+            sug = sugerencias.get(clave, {})
             campos.append({
                 "clave": clave, "etiqueta": etiqueta, "secreto": bool(secreto),
                 "valor": config.enmascarar(v) if secreto else v,
                 "tiene": bool(v),
+                "opciones": sug.get("opciones", []),
+                "default": sug.get("default", ""),
             })
         return campos
 

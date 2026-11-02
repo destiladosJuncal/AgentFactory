@@ -247,12 +247,17 @@ class Orchestrator:
         return (f"{task}\n\nThe request breaks down into these parts:\n"
                 f"{enumerated}\n\nPlan sub-tasks that together cover all parts.")
 
-    def run(self, task: str) -> str:
+    def run(self, task: str, subtasks: Optional[List[SubTask]] = None) -> str:
+        """Corre la orquestación. Si `subtasks` viene dado (plan aprobado en la
+        Fase A conversacional), lo usa tal cual y NO fracciona ni re-planifica:
+        va directo a ejecutar/revisar/sintetizar. El motor MUTA esos SubTask
+        (status/result) in place, así el estado persistido queda actualizado."""
         self._emit(type="start", task=task)
-        planning_task = self._fraction(task)
-        subtasks = self._plan(planning_task)
+        if subtasks is None:
+            planning_task = self._fraction(task)
+            subtasks = self._plan(planning_task)
         self._emit(type="plan", subtasks=[s.as_dict() for s in subtasks])
-        done: Dict[str, str] = {}
+        done: Dict[str, str] = {s.id: s.result for s in subtasks if s.status == "done"}
 
         for round_no in range(self.max_rounds):
             if self._stopped():
@@ -336,18 +341,23 @@ def default_fractioner(minimo: int = 1) -> Callable[[str], List[str]]:
 def deepseek_worker_runner(tools: bool = True,
                            worker_provider: str = "deepseek",
                            registry: Optional[list] = None,
-                           on_event: Optional[Callable[[str, str, Any], None]] = None) -> WorkerRunner:
+                           on_event: Optional[Callable[[str, str, Any], None]] = None,
+                           base_dir=None) -> WorkerRunner:
     """Each sub-task runs as a DeepSeek agent (its own conversation, full tool
     loop and confirmation guard when ``tools`` is on). Returns the worker's final
     text. If ``registry`` is given, each worker's chat is appended to it so the
     caller can cancel in-flight workers. If ``on_event`` is given, it receives
     (sub_id, kind, data): kind "think" with each streamed token, and kind "tool"
-    with each tool event — so the UI can show the worker's reasoning live."""
+    with each tool event — so the UI can show the worker's reasoning live.
+
+    ``base_dir`` guarda las conversaciones de los workers AHÍ (la carpeta del
+    run), no en _conversaciones: el enjambre queda autocontenido y no ensucia la
+    lista del Chat."""
     from core.conversaciones import GestorConversaciones
     from core.chat import ConversacionChat
     from core.proveedores import crear_proveedor
 
-    gestor = GestorConversaciones()
+    gestor = GestorConversaciones(base_dir) if base_dir else GestorConversaciones()
 
     def run(sub: SubTask, context: Dict[str, str]) -> str:
         conv_dir = gestor.crear_conversacion(f"worker · {sub.id}")

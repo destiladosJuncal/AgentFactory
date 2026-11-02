@@ -35,6 +35,7 @@ class Puente:
         self._chats: Dict[str, ConversacionChat] = {}
         self.window = None            # se setea después de create_window
         self._workers_activos = []    # chats de workers del orquestador en vuelo
+        self._orq_sesiones = {}       # run_id -> {state, history} (Fase A/B vivas)
         self._enjambre_cancelado = False
         self._proxy = None            # captura (mitmproxy)
         self._almacen = None
@@ -64,9 +65,15 @@ class Puente:
     def listar_conversaciones(self) -> List[Dict[str, Any]]:
         out = []
         for c in self.gestor.listar_conversaciones():
+            titulo = c.get("titulo") or c["path"].name
+            # El enjambre es autocontenido: las conversaciones de workers (y las
+            # 'crew ·' viejas) NO ensucian la lista del Chat; viven en la ventana
+            # de Agentes / bajo la carpeta del run.
+            if titulo.startswith("worker ·") or titulo.startswith("crew ·"):
+                continue
             out.append({
                 "nombre": c["path"].name,
-                "titulo": c.get("titulo") or c["path"].name,
+                "titulo": titulo,
                 "mensajes": c.get("mensajes", 0),
                 "crew": c["path"].name.startswith("crew-"),
                 "creado": c.get("creado", ""),
@@ -551,52 +558,171 @@ class Puente:
     # -- enjambre (multi-agente) -------------------------------------------
 
 
-    def enjambre_iniciar(self, tarea: str, max_agents: int = 6,
-                         con_tools: bool = True, fraccionar: bool = True) -> Dict[str, Any]:
-        """Lanza el orquestador (Opus gestiona) sobre la tarea. Si `fraccionar`,
-        primero parte el pedido en partes atómicas (así Opus recibe algo prolijo).
-        Opus planifica, los workers DeepSeek resuelven en paralelo (con
-        herramientas), Opus revisa y re-planifica hasta cerrar, y sintetiza."""
+    # -- Orquestador en DOS FASES (A: planificar conversando · B: ejecutar) ---
+    # Cada corrida vive en su carpeta (_orquestaciones/<run_id>): workers y estado
+    # quedan autocontenidos, fuera del Chat. _orq_sesiones guarda las sesiones
+    # vivas (estado + historial de la charla de planificación).
+
+    def orq_iniciar(self, tarea: str, fraccionar: bool = True) -> Dict[str, Any]:
+        """Fase A: clasifica (router Jev), elige el modelo orquestador por
+        categoría y arranca la planificación conversacional. No ejecuta nada."""
         tarea = (tarea or "").strip()
         if not tarea:
             return {"ok": False}
         self._enjambre_cancelado = False
-        self._workers_activos = []
-        threading.Thread(target=self._worker_orquestador,
-                         args=(tarea, int(max_agents), bool(con_tools), bool(fraccionar)),
-                         daemon=True).start()
+        threading.Thread(target=self._worker_orq_iniciar,
+                         args=(tarea, bool(fraccionar)), daemon=True).start()
         return {"ok": True}
 
-    def _worker_orquestador(self, tarea, maxi, con_tools, fraccionar=True):
+    def _worker_orq_iniciar(self, tarea, fraccionar):
         try:
-            from core import orchestrator as orq
-            try:
-                plan_llm = orq.opus_planner()   # usa ANTHROPIC_MODEL (Opus) del .env
-            except Exception as e:
-                self._js("orqError",
-                         f"No pude activar el orquestador (Opus): {e}. "
-                         f"Revisá ANTHROPIC_API_KEY en Config.")
-                return
-            def _ev_worker(wid, kind, data):
-                if kind == "think":
-                    self._js("orqEvento", {"type": "worker_think", "id": wid, "text": data})
-                else:
-                    self._js("orqEvento", {"type": "worker_tool", "id": wid, "ev": data})
-            run_worker = orq.deepseek_worker_runner(
-                tools=con_tools, registry=self._workers_activos, on_event=_ev_worker)
-            motor = orq.Orchestrator(
-                plan_llm, run_worker, max_subtasks=maxi,
-                fractioner=orq.default_fractioner() if fraccionar else None,
-                progress=lambda ev: self._js("orqEvento", ev),
-                should_stop=lambda: self._enjambre_cancelado)
-            motor.run(tarea)
-            self._js("orqFin")
+            from core import classifier, planning
+            from core.orchestration_state import OrchestrationState
+            self._js("orqEvento", {"type": "estado", "texto": "🔎 Clasificando el pedido…"})
+            cls = classifier.classify_task(tarea)
+            prov = planning.orchestrator_provider_for(cls.get("category"))
+            state = OrchestrationState.create(tarea, classification=cls, orchestrator_model=prov)
+            self._orq_sesiones[state.run_id] = {
+                "state": state, "history": [{"role": "user", "content": tarea}]}
+            self._js("orqEvento", {"type": "run", "run_id": state.run_id,
+                                   "tarea": tarea, "clasificacion": cls, "modelo": prov})
+            self._orq_planificar_vuelta(state.run_id)
         except Exception:
             self._js("orqError", traceback.format_exc())
 
-    def enjambre_detener(self) -> Dict[str, Any]:
+    def _orq_planificar_vuelta(self, run_id):
+        from core import planning
+        from core.orchestration_state import AWAITING_APPROVAL, PLANNING
+        ses = self._orq_sesiones.get(run_id)
+        if not ses:
+            return
+        state = ses["state"]
+        cls = state.classification
+        llm = planning.make_orchestrator_llm(
+            cls.get("category"),
+            on_fallback=lambda: self._js("orqEvento", {"type": "fallback", "run_id": run_id}))
+        on_token = lambda t: self._js("orqEvento", {
+            "type": "think", "run_id": run_id, "phase": "plan", "text": t})
+        self._js("orqEvento", {"type": "estado", "texto": "🧠 Planificando…"})
+        try:
+            r = planning.plan_turn(ses["history"], cls, llm=llm, on_token=on_token)
+        except Exception as e:
+            self._js("orqError", str(e)); return
+        ses["history"].append({"role": "assistant", "content": r.get("reply", "")})
+        if r["kind"] == "questions":
+            state.status = PLANNING; state.save()
+            self._js("orqEvento", {"type": "questions", "run_id": run_id,
+                                   "questions": r["questions"], "note": r.get("note", "")})
+        else:
+            state.set_plan(r["subtasks"]); state.status = AWAITING_APPROVAL; state.save()
+            self._js("orqEvento", {"type": "plan", "run_id": run_id,
+                                   "subtasks": [s.as_dict() for s in state.subtasks],
+                                   "note": r.get("note", "")})
+
+    def orq_responder(self, run_id: str, texto: str) -> Dict[str, Any]:
+        """Continúa la charla de planificación (responder preguntas / ajustar)."""
+        ses = self._orq_sesiones.get(run_id)
+        if not ses or not (texto or "").strip():
+            return {"ok": False}
+        ses["history"].append({"role": "user", "content": texto.strip()})
+        threading.Thread(target=self._orq_planificar_vuelta, args=(run_id,), daemon=True).start()
+        return {"ok": True}
+
+    def orq_editar_plan(self, run_id: str, subtasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Reemplaza el plan con las ediciones manuales del panel."""
+        from core.orchestration_state import SubTask, AWAITING_APPROVAL
+        ses = self._orq_sesiones.get(run_id)
+        if not ses:
+            return {"ok": False}
+        state = ses["state"]
+        state.set_plan([SubTask.from_dict(s) for s in (subtasks or [])])
+        state.status = AWAITING_APPROVAL; state.save()
+        return {"ok": True, "subtasks": [s.as_dict() for s in state.subtasks]}
+
+    def orq_confirmar_scope(self, run_id: str, ok: bool = True) -> Dict[str, Any]:
+        ses = self._orq_sesiones.get(run_id)
+        if not ses:
+            return {"ok": False}
+        ses["state"].scope_confirmed = bool(ok); ses["state"].save()
+        return {"ok": True}
+
+    def orq_ejecutar(self, run_id: str) -> Dict[str, Any]:
+        """Fase B: con el plan aprobado, corre los workers. Si la categoría pide
+        scope y no está confirmado, frena y lo pide."""
+        ses = self._orq_sesiones.get(run_id)
+        if not ses:
+            return {"ok": False}
+        cls = ses["state"].classification
+        if cls.get("needs_scope") and not ses["state"].scope_confirmed:
+            return {"ok": False, "needs_scope": True, "run_id": run_id,
+                    "categoria": cls.get("category")}
+        self._enjambre_cancelado = False
+        self._workers_activos = []
+        threading.Thread(target=self._worker_orq_ejecutar, args=(run_id,), daemon=True).start()
+        return {"ok": True}
+
+    def _worker_orq_ejecutar(self, run_id):
+        try:
+            from core import orchestrator as orq
+            from core import planning
+            from core.orchestration_state import RUNNING, DONE, ERROR, runs_dir
+            ses = self._orq_sesiones.get(run_id)
+            if not ses:
+                return
+            state = ses["state"]; cls = state.classification
+            state.status = RUNNING; state.save()
+
+            def ev_worker(wid, kind, data):
+                tipo = "worker_think" if kind == "think" else "worker_tool"
+                clave = "text" if kind == "think" else "ev"
+                self._js("orqEvento", {"type": tipo, "run_id": run_id, "id": wid, clave: data})
+
+            workers_dir = runs_dir() / run_id / "workers"
+            run_worker = orq.deepseek_worker_runner(
+                tools=True, registry=self._workers_activos, on_event=ev_worker,
+                base_dir=workers_dir)
+            # review/síntesis con el modelo por categoría (fallback incluido).
+            _mo = planning.make_orchestrator_llm(cls.get("category"))
+            plan_llm = lambda prompt, on_token=None: _mo(
+                [{"role": "user", "content": prompt}], on_token)
+
+            def prog(ev):
+                self._js("orqEvento", {**ev, "run_id": run_id})
+                try:
+                    state.save()
+                except Exception:
+                    pass
+
+            motor = orq.Orchestrator(plan_llm, run_worker, progress=prog,
+                                     should_stop=lambda: self._enjambre_cancelado)
+            sintesis = motor.run(state.task, subtasks=state.subtasks)
+            state.synthesis = sintesis
+            state.status = RUNNING if self._enjambre_cancelado else DONE
+            state.save()
+            self._js("orqEvento", {"type": "fin", "run_id": run_id, "sintesis": sintesis})
+        except Exception:
+            try:
+                ses = self._orq_sesiones.get(run_id)
+                if ses:
+                    ses["state"].status = ERROR; ses["state"].save()
+            except Exception:
+                pass
+            self._js("orqError", traceback.format_exc())
+
+    def orq_listar(self) -> List[Dict[str, Any]]:
+        """Resumen de corridas (para el árbol de enjambres)."""
+        from core.orchestration_state import list_runs
+        return list_runs()
+
+    def orq_cargar(self, run_id: str) -> Dict[str, Any]:
+        """Estado completo de una corrida (para desplegar el árbol)."""
+        from core.orchestration_state import OrchestrationState
+        ses = self._orq_sesiones.get(run_id)
+        st = ses["state"] if ses else OrchestrationState.load(run_id)
+        return st.as_dict() if st else {}
+
+    def orq_detener(self) -> Dict[str, Any]:
         self._enjambre_cancelado = True
-        # Cortar también el tool-loop de los workers en vuelo.
         for chat in getattr(self, "_workers_activos", []):
             try:
                 chat.cancelado = True

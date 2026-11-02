@@ -167,6 +167,28 @@ def test_fraccionado_una_sola_parte_no_fracciona():
     assert not [e for e in eventos if e["type"] == "fraction"]
 
 
+def test_run_con_plan_aprobado_no_replanifica_y_muta_estado():
+    # Fase B: se le pasa el plan aprobado; NO debe planificar, y debe ejecutar
+    # mutando los SubTask in place (status/result) para que el estado persista.
+    plan_llamado = []
+    class OrqSpy:
+        def __call__(self, prompt, on_token=None):
+            if "Break the task" in prompt:
+                plan_llamado.append(1)            # no debería pasar
+                return "[]"
+            if "reviewing your workers" in prompt:
+                return json.dumps({"done": True, "synthesis": "OK"})
+            return "OK"
+    aprobado = [SubTask(id="a", objective="A"), SubTask(id="b", objective="B", depends_on=["a"])]
+    o = Orchestrator(plan_llm=OrqSpy(),
+                     run_worker=lambda s, ctx: f"resultado-{s.id}")
+    out = o.run("tarea", subtasks=aprobado)
+    assert out == "OK"
+    assert plan_llamado == []                      # no re-planificó
+    assert aprobado[0].status == "done" and aprobado[0].result == "resultado-a"
+    assert aprobado[1].result == "resultado-b"     # respetó la dependencia y corrió
+
+
 def test_progreso_emite_eventos():
     eventos = []
     orq = FakeOrq(plan=[{"id": "a", "objective": "A"}],

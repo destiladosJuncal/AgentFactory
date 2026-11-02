@@ -33,6 +33,9 @@ CAMPOS: List[Tuple[str, str, bool]] = [
     ("GEMINI_MODEL", "Gemini · modelo", False),
     ("GEMINI_API_URL", "Gemini · URL", False),
     ("ANTHROPIC_EFFORT", "Claude · effort", False),
+    ("TYPESAFE_API_KEY", "Jev (TypeSafe) · API key", True),
+    ("TYPESAFE_MODEL", "Jev · modelo", False),
+    ("TYPESAFE_API_URL", "Jev · URL", False),
 ]
 
 CLAVES_SECRETAS = {c for c, _, secreto in CAMPOS if secreto}

@@ -77,10 +77,17 @@
   .wtools { padding:4px 12px 0; }
   .wtool { font:12px Menlo,monospace; color:#0e7490; padding:2px 0; white-space:pre-wrap; word-break:break-word; }
   .wtool.steer { color:#7c4dff; font-weight:600; }
-  #orq-runs { margin-top:8px; border:1px solid var(--borde); border-radius:8px; max-height:220px; overflow-y:auto; background:#fff; }
-  .run-row { display:flex; align-items:center; gap:10px; padding:7px 10px; border-bottom:1px solid var(--borde); font-size:13px; }
-  .run-row:last-child { border-bottom:0; }
-  .run-task { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #orq-runs-side { width:230px; min-width:230px; border-right:1px solid var(--borde);
+                   background:var(--panel); display:flex; flex-direction:column; overflow:hidden; }
+  #orq-runs-cab { display:flex; align-items:center; gap:6px; padding:10px 12px; border-bottom:1px solid var(--borde); }
+  #orq-runs-cab b { flex:1; }
+  #orq-runs-list { overflow-y:auto; flex:1; }
+  .run-row { padding:8px 12px; border-bottom:1px solid var(--borde); font-size:13px; cursor:pointer; }
+  .run-row:hover { background:#eef0f3; }
+  .run-row.sel { background:#e6e9ff; border-left:3px solid var(--acento); padding-left:9px; }
+  .run-row .run-top { display:flex; gap:6px; }
+  .run-task { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .run-res { color:var(--acento); cursor:pointer; text-decoration:underline; }
   .arbol-nodo.corregido summary { background:#f6f3ff; }
   .exec.vivo { border-color:var(--acento); background:#f6f3ff; }
   .exec.vivo.err { border-color:var(--error); background:#fff4f3; }
@@ -361,12 +368,19 @@
             <label><input id="enj-super" type="checkbox" checked> 👁 supervisar workers</label>
             <button id="enj-iniciar" onclick="enjIniciar()">🧠 Planificar</button>
             <button id="enj-detener" onclick="enjDetener()" disabled>⏹ Detener</button>
-            <button id="enj-corridas" class="mini" onclick="orqCorridas()">📂 Corridas</button>
             <span id="enj-estado"></span>
           </div>
-          <div id="orq-runs" style="display:none"></div>
         </div>
         <div id="enj-cols">
+          <!-- Barra lateral: enjambres (conversaciones) pasados -->
+          <aside id="orq-runs-side">
+            <div id="orq-runs-cab">
+              <b>Enjambres</b>
+              <button class="mini" onclick="orqNueva()" title="Nuevo enjambre">＋</button>
+              <button class="mini" onclick="orqRefrescarRuns()" title="Refrescar">↻</button>
+            </div>
+            <div id="orq-runs-list"></div>
+          </aside>
           <!-- Árbol del run: orquestador + workers -->
           <div id="orq-arbol"><p class="vacio">🧠 <b>Orquestador en dos fases</b>. Escribí una tarea y dale <b>Planificar</b>: el orquestador propone un plan (o te pregunta), lo ajustás, y recién al <b>Ejecutar</b> corren los workers. El enjambre se ve acá como un árbol: desplegá el run para ver el orquestador y sus workers.</p></div>
           <!-- Panel del plan: colapsable + editable -->
@@ -434,6 +448,7 @@
     if (tab === "config") cargarConfig();
     if (tab === "captura") cargarCaptura();
     if (tab === "tareas") cargarTareas();
+    if (tab === "agentes") orqRefrescarRuns();
   }
 
   // ===================== TAREAS =====================
@@ -1149,6 +1164,7 @@
         + `scope: ${c.needs_scope?"sí":"no"} · orquesta: <b>${escapar(ev.modelo||"")}</b>`;
       arbol().appendChild(chip);
       orqAsegurarOrquestador(ev.modelo);
+      orqRefrescarRuns();
       return;
     }
     if (t === "think"){
@@ -1210,7 +1226,7 @@
         b.innerHTML = `<div class="quien" style="color:#0f7b4f">✅ Síntesis</div><div class="cuerpo">${escapar(txt).replace(/\n/g,"<br>")}</div>`;
         arbol().appendChild(b);
       }
-      if (t === "fin"){ enjSetCorriendo(false); $("#enj-estado").textContent = ""; }
+      if (t === "fin"){ enjSetCorriendo(false); $("#enj-estado").textContent = ""; orqRefrescarRuns(); }
       return;
     }
   }
@@ -1251,22 +1267,33 @@
       arbol().appendChild(b);
     }
   }
-  async function orqCorridas(){
-    const box = $("#orq-runs");
-    if (box.style.display !== "none"){ box.style.display="none"; return; }
-    const runs = await window.pywebview.api.orq_listar();
-    box.innerHTML = runs.length ? "" : `<div class="n" style="padding:6px">No hay corridas todavía.</div>`;
+  async function orqRefrescarRuns(){
+    const box = $("#orq-runs-list");
+    let runs = [];
+    try { runs = await window.pywebview.api.orq_listar(); } catch(e){ return; }
+    box.innerHTML = runs.length ? "" : `<div class="n" style="padding:10px">Todavía no hay enjambres. Escribí una tarea arriba y dale Planificar.</div>`;
+    const ICON = {done:"✅", running:"⏳", paused:"⏸", awaiting:"📋", planning:"🧠", error:"❌", cancelled:"⏹"};
     for (const r of runs){
-      const row = document.createElement("div"); row.className="run-row";
-      row.innerHTML = `<span class="run-task">${escapar(r.task||"(sin título)")}</span>`
-        + `<span class="n">${escapar(r.status)} · ${r.done}/${r.total} · ${escapar((r.updated||"").slice(0,16))}</span>`
-        + `<button class="mini run-ver">Ver</button>`
-        + (r.resumable ? `<button class="mini run-res">▶ Reanudar</button>` : "");
-      row.querySelector(".run-ver").onclick = () => orqVer(r.run_id);
-      const rb = row.querySelector(".run-res"); if (rb) rb.onclick = () => orqReanudarRun(r.run_id);
+      const row = document.createElement("div");
+      row.className = "run-row" + (r.run_id === orqRun ? " sel" : "");
+      row.innerHTML = `<div class="run-top">${ICON[r.status]||"•"} <span class="run-task">${escapar(r.task||"(sin título)")}</span></div>`
+        + `<div class="n">${r.done}/${r.total} · ${escapar((r.updated||"").slice(0,16))}`
+        + (r.resumable ? ` · <a class="run-res">▶ reanudar</a>` : "") + `</div>`;
+      row.onclick = (e) => { if (!e.target.classList.contains("run-res")) orqVer(r.run_id); };
+      const rb = row.querySelector(".run-res");
+      if (rb) rb.onclick = (e) => { e.stopPropagation(); orqReanudarRun(r.run_id); };
       box.appendChild(row);
     }
-    box.style.display = "";
+  }
+  function orqNueva(){
+    orqRun = null; orqOrqNode = null; orqPlanActual = [];
+    for (const k in orqNodos) delete orqNodos[k];
+    arbol().innerHTML = `<p class="vacio">🧠 Escribí una tarea arriba y dale <b>Planificar</b>.</p>`;
+    $("#orq-plan").innerHTML = ""; $("#orq-plan-wrap").style.display = "none";
+    $("#orq-progreso").textContent = ""; $("#enj-estado").textContent = "";
+    $("#enj-tarea").value = ""; $("#enj-tarea").focus();
+    enjSetCorriendo(false); enjSetFaseA(false);
+    orqRefrescarRuns();
   }
   async function orqVer(run_id){
     const est = await window.pywebview.api.orq_cargar(run_id);

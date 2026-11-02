@@ -214,11 +214,11 @@
   .campo input { flex:1; font:14px -apple-system,sans-serif; border:1px solid #c8ccd4;
                  border-radius:8px; padding:7px 10px; }
   .acciones { margin:22px 0 0; max-width:720px; display:flex; gap:10px; align-items:center;
-              padding-left:214px; }
+              padding-left:214px; flex-wrap:wrap; }
   .acciones button { border:0; border-radius:8px; padding:9px 16px; cursor:pointer; font-size:14px; }
   #cfg-guardar { background:var(--usuario); color:#fff; }
   #cfg-probar { background:var(--panel); color:#333; border:1px solid #c8ccd4; }
-  #cfg-estado { font-size:13px; }
+  #cfg-estado { font-size:13px; flex-basis:100%; line-height:1.7; }
   .ok { color:var(--agente); } .err { color:var(--error); }
 </style></head>
 <body>
@@ -271,7 +271,7 @@
         <div id="cfg-campos"></div>
         <div class="acciones">
           <button id="cfg-guardar" onclick="guardarConfig()">Guardar</button>
-          <button id="cfg-probar" onclick="probarProveedor()">Probar conexión</button>
+          <button id="cfg-probar" onclick="probarTodo()">Probar conexiones</button>
           <span id="cfg-estado"></span>
         </div>
 
@@ -926,14 +926,18 @@
       } else { est.textContent = "❌ " + (r.error || "falló"); est.className = "err"; }
     } finally { $("#comp-btn").disabled = false; }
   }
-  async function probarProveedor() {
-    const est = $("#cfg-estado"); est.textContent = "Probando…"; est.className = "";
-    let prov = "";
-    for (const inp of $("#cfg-campos").querySelectorAll("input"))
-      if (inp.dataset.clave === "AGENTE_PROVEEDOR") prov = inp.value.trim();
-    const r = await window.pywebview.api.probar_proveedor(prov);
-    if (r.ok) { est.textContent = `✅ ${r.modelo || prov}: "${r.respuesta || "OK"}"`; est.className = "ok"; }
-    else { est.textContent = `❌ ${r.detalle || "falló"}${r.pista ? " — " + r.pista : ""}`; est.className = "err"; }
+  async function probarTodo() {
+    const est = $("#cfg-estado"); est.textContent = "Probando todo lo cargado…"; est.className = "";
+    const r = await window.pywebview.api.probar_todo();
+    if (!r.resultados || !r.resultados.length) {
+      est.textContent = "❌ " + (r.error || "no hay nada que probar"); est.className = "err"; return;
+    }
+    const lineas = r.resultados.map(x => {
+      const cab = (x.ok ? "✅ " : "❌ ") + x.proveedor + (x.modelo ? " (" + x.modelo + ")" : "");
+      return escapar(cab + ": " + (x.detalle || "") + (x.pista ? " — " + x.pista : ""));
+    });
+    est.innerHTML = lineas.join("<br>");
+    est.className = r.ok ? "ok" : "err";
   }
 
   // ===================== ENJAMBRE =====================

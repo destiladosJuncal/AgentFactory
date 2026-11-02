@@ -455,6 +455,56 @@ class Puente:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # Proveedores LLM: (clave interna, variable de key en el .env, etiqueta)
+    _PROVEEDORES_LLM = [
+        ("deepseek", "DEEPSEEK_API_KEY", "DeepSeek"),
+        ("claude", "ANTHROPIC_API_KEY", "Claude"),
+        ("qwen", "QWEN_API_KEY", "Qwen"),
+        ("gemini", "GEMINI_API_KEY", "Gemini"),
+    ]
+
+    def probar_todo(self) -> Dict[str, Any]:
+        """Prueba TODO lo que tenga credenciales cargadas: una llamada real por
+        cada proveedor LLM con key, más Jev si está configurado. Devuelve un
+        resultado por proveedor."""
+        from core import config
+        valores = config.leer()
+        resultados: List[Dict[str, Any]] = []
+        for prov, keyvar, etiqueta in self._PROVEEDORES_LLM:
+            if not (valores.get(keyvar) or "").strip():
+                continue
+            r = config.probar(prov)
+            resultados.append({
+                "proveedor": etiqueta,
+                "ok": bool(r.get("ok")),
+                "modelo": r.get("modelo", ""),
+                "detalle": (r.get("respuesta") if r.get("ok")
+                            else (r.get("detalle") or r.get("error") or "falló")),
+                "pista": r.get("pista", ""),
+            })
+        if (valores.get("TYPESAFE_API_KEY") or "").strip():
+            resultados.append(self._probar_jev())
+        if not resultados:
+            return {"ok": False, "resultados": [],
+                    "error": "No hay ninguna credencial cargada para probar."}
+        return {"ok": all(x["ok"] for x in resultados), "resultados": resultados}
+
+    @staticmethod
+    def _probar_jev() -> Dict[str, Any]:
+        """Jev no es un LLM: lo probamos con una clasificación booleana mínima."""
+        import os
+        from core import classifier
+        modelo = os.getenv("TYPESAFE_MODEL") or classifier.TYPESAFE_MODEL_DEFAULT
+        try:
+            ans = classifier.jev_query(
+                "ping", {"prueba": classifier.boolean("¿Esto es una prueba de conexión?")})
+            a = ans.get("prueba", {})
+            return {"proveedor": "Jev", "ok": True, "modelo": modelo,
+                    "detalle": f"respondió (prob {a.get('probability')})", "pista": ""}
+        except Exception as e:
+            return {"proveedor": "Jev", "ok": False, "modelo": modelo,
+                    "detalle": str(e)[:300], "pista": ""}
+
     # -- empaquetar / distribuir -------------------------------------------
 
     def crear_paquete(self, formato_pkg: str) -> Dict[str, Any]:

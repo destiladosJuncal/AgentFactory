@@ -189,6 +189,18 @@ def test_run_con_plan_aprobado_no_replanifica_y_muta_estado():
     assert aprobado[1].result == "resultado-b"     # respetó la dependencia y corrió
 
 
+def test_run_saltea_subtareas_done():
+    # Resume: una sub-tarea ya 'done' no se re-corre y conserva su resultado.
+    corridos = []
+    done_sub = SubTask(id="a", objective="A", status="done", result="ya estaba")
+    pend = SubTask(id="b", objective="B")
+    o = Orchestrator(plan_llm=FakeOrq(plan=[], reviews=[{"done": True, "synthesis": "OK"}]),
+                     run_worker=lambda s, ctx: (corridos.append(s.id) or f"r-{s.id}"))
+    o.run("t", subtasks=[done_sub, pend])
+    assert corridos == ["b"]              # 'a' se salteó
+    assert done_sub.result == "ya estaba" and pend.result == "r-b"
+
+
 def test_steering_redirect_luego_ok(monkeypatch):
     # El worker corre; el supervisor dice 'redirect' con feedback -> el worker
     # rehace (misma conversación) -> 'ok'. Debe quedar registrado en history.

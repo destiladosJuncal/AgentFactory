@@ -725,8 +725,40 @@ class Puente:
         st = ses["state"] if ses else OrchestrationState.load(run_id)
         return st.as_dict() if st else {}
 
+    def orq_reanudar(self, run_id: str, supervisar: bool = True) -> Dict[str, Any]:
+        """Reanuda una corrida interrumpida: carga el estado, repone a 'pending'
+        las que quedaron a mitad ('running'), conserva las 'done', y sigue la
+        ejecución desde ahí (el motor saltea las ya hechas)."""
+        from core.orchestration_state import OrchestrationState, PENDING, IN_PROGRESS
+        st = OrchestrationState.load(run_id)
+        if not st:
+            return {"ok": False, "error": "no encontré esa corrida"}
+        for s in st.subtasks:
+            if s.status == IN_PROGRESS:       # worker interrumpido -> re-correr
+                s.status = PENDING
+        st.save()
+        self._orq_sesiones[run_id] = {"state": st,
+                                      "history": [{"role": "user", "content": st.task}]}
+        cls = st.classification
+        if cls.get("needs_scope") and not st.scope_confirmed:
+            return {"ok": False, "needs_scope": True, "run_id": run_id,
+                    "categoria": cls.get("category"), "estado": st.as_dict()}
+        self._enjambre_cancelado = False
+        self._workers_activos = []
+        threading.Thread(target=self._worker_orq_ejecutar,
+                         args=(run_id, bool(supervisar)), daemon=True).start()
+        return {"ok": True, "run_id": run_id, "estado": st.as_dict()}
+
     def orq_detener(self) -> Dict[str, Any]:
         self._enjambre_cancelado = True
+        # Deja la corrida en 'paused' para poder reanudarla.
+        for ses in self._orq_sesiones.values():
+            try:
+                from core.orchestration_state import RUNNING, PAUSED
+                if ses["state"].status == RUNNING:
+                    ses["state"].status = PAUSED; ses["state"].save()
+            except Exception:
+                pass
         for chat in getattr(self, "_workers_activos", []):
             try:
                 chat.cancelado = True

@@ -77,6 +77,10 @@
   .wtools { padding:4px 12px 0; }
   .wtool { font:12px Menlo,monospace; color:#0e7490; padding:2px 0; white-space:pre-wrap; word-break:break-word; }
   .wtool.steer { color:#7c4dff; font-weight:600; }
+  #orq-runs { margin-top:8px; border:1px solid var(--borde); border-radius:8px; max-height:220px; overflow-y:auto; background:#fff; }
+  .run-row { display:flex; align-items:center; gap:10px; padding:7px 10px; border-bottom:1px solid var(--borde); font-size:13px; }
+  .run-row:last-child { border-bottom:0; }
+  .run-task { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .arbol-nodo.corregido summary { background:#f6f3ff; }
   .exec.vivo { border-color:var(--acento); background:#f6f3ff; }
   .exec.vivo.err { border-color:var(--error); background:#fff4f3; }
@@ -356,8 +360,10 @@
             <label><input id="enj-super" type="checkbox" checked> 👁 supervisar workers</label>
             <button id="enj-iniciar" onclick="enjIniciar()">🧠 Planificar</button>
             <button id="enj-detener" onclick="enjDetener()" disabled>⏹ Detener</button>
+            <button id="enj-corridas" class="mini" onclick="orqCorridas()">📂 Corridas</button>
             <span id="enj-estado"></span>
           </div>
+          <div id="orq-runs" style="display:none"></div>
         </div>
         <div id="enj-cols">
           <!-- Árbol del run: orquestador + workers -->
@@ -1207,6 +1213,79 @@
     b.innerHTML = `<div class="quien" style="color:#b42318">❌ Error</div><div class="cuerpo">${escapar(txt)}</div>`;
     arbol().appendChild(b);
     enjSetCorriendo(false); $("#enj-estado").textContent = "Error";
+  }
+
+  // ---- corridas: listar / ver / reanudar ----
+  function orqRenderEstado(estado){
+    orqRun = estado.run_id; orqOrqNode = null;
+    for (const k in orqNodos) delete orqNodos[k];
+    arbol().innerHTML = "";
+    const c = estado.classification || {};
+    const chip = document.createElement("div"); chip.className = "orq-cls";
+    chip.innerHTML = `🔎 <b>${escapar(c.category||"?")}</b> · ${escapar(c.mode||"")} · `
+      + `scope: ${c.needs_scope?"sí":"no"} · orquesta: <b>${escapar(estado.orchestrator_model||"")}</b>`
+      + ` · estado: ${escapar(estado.status||"")}`;
+    arbol().appendChild(chip);
+    orqAsegurarOrquestador(estado.orchestrator_model);
+    for (const s of (estado.subtasks||[])){
+      if (s.status === "done" || s.status === "error"){
+        const d = orqNodoWorker(s.id, s.objective);
+        const est = d.querySelector(".estado");
+        if (est) est.textContent = (s.status==="done"?"✓ ":"✗ ") + (s.result||"").slice(0,80);
+        const pre = d.querySelector("pre"); if (pre) pre.textContent = s.result||"";
+        d.classList.remove("vivo"); if (s.status!=="done") d.classList.add("err");
+        const cont = d.querySelector(".wtools");
+        for (const h of (s.history||[])){ const ln=document.createElement("div"); ln.className="wtool steer"; ln.textContent="↻ "+(h.kind||"")+": "+(h.detail||""); cont.appendChild(ln); }
+      }
+    }
+    orqRenderPlan(estado.subtasks||[]); orqActualizarProgreso();
+    if (estado.synthesis){
+      const b=document.createElement("div"); b.className="orq-sintesis";
+      b.innerHTML=`<div class="quien" style="color:#0f7b4f">✅ Síntesis</div><div class="cuerpo">${escapar(estado.synthesis).replace(/\n/g,"<br>")}</div>`;
+      arbol().appendChild(b);
+    }
+  }
+  async function orqCorridas(){
+    const box = $("#orq-runs");
+    if (box.style.display !== "none"){ box.style.display="none"; return; }
+    const runs = await window.pywebview.api.orq_listar();
+    box.innerHTML = runs.length ? "" : `<div class="n" style="padding:6px">No hay corridas todavía.</div>`;
+    for (const r of runs){
+      const row = document.createElement("div"); row.className="run-row";
+      row.innerHTML = `<span class="run-task">${escapar(r.task||"(sin título)")}</span>`
+        + `<span class="n">${escapar(r.status)} · ${r.done}/${r.total} · ${escapar((r.updated||"").slice(0,16))}</span>`
+        + `<button class="mini run-ver">Ver</button>`
+        + (r.resumable ? `<button class="mini run-res">▶ Reanudar</button>` : "");
+      row.querySelector(".run-ver").onclick = () => orqVer(r.run_id);
+      const rb = row.querySelector(".run-res"); if (rb) rb.onclick = () => orqReanudarRun(r.run_id);
+      box.appendChild(row);
+    }
+    box.style.display = "";
+  }
+  async function orqVer(run_id){
+    const est = await window.pywebview.api.orq_cargar(run_id);
+    if (!est || !est.run_id) return;
+    $("#orq-runs").style.display="none";
+    orqRenderEstado(est);
+    enjSetCorriendo(false);
+    enjSetFaseA(est.status==="awaiting" || est.status==="planning");
+    $("#enj-estado").textContent = "📂 " + escapar(est.status||"");
+  }
+  async function orqReanudarRun(run_id){
+    $("#orq-runs").style.display="none";
+    enjSetCorriendo(true); enjSetFaseA(false);
+    $("#enj-estado").textContent = "▶ reanudando…";
+    const r = await window.pywebview.api.orq_reanudar(run_id, $("#enj-super").checked);
+    if (r && r.estado) orqRenderEstado(r.estado);
+    if (r && r.needs_scope){
+      enjSetCorriendo(false);
+      const ok = await confirmarSimple("⚠️ Confirmar alcance / autorización",
+        "Acción activa (" + escapar(r.categoria||"") + ") — confirmá que estás autorizado y en alcance.", "Confirmar y reanudar");
+      if (ok){ await window.pywebview.api.orq_confirmar_scope(run_id, true); orqReanudarRun(run_id); }
+      else $("#enj-estado").textContent = "";
+    } else if (r && r.ok){
+      enjSetCorriendo(true); $("#enj-estado").textContent = "⚙ reanudando ejecución…";
+    }
   }
 
 

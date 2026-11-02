@@ -691,7 +691,10 @@ class Puente:
                 supervisor=(_mo if supervisar else None), max_corrections=2)
 
             def prog(ev):
-                self._js("orqEvento", {**ev, "run_id": run_id})
+                # En Fase B el panel del plan ya existe; el 'plan'/'start' que
+                # emite el motor al arrancar haría que la UI vuelva a modo Fase A.
+                if ev.get("type") not in ("plan", "start"):
+                    self._js("orqEvento", {**ev, "run_id": run_id})
                 try:
                     state.save()
                 except Exception:

@@ -41,18 +41,8 @@ WorkerRunner = Callable[["SubTask", Dict[str, str]], str]
 Progress = Callable[[Dict[str, Any]], None]
 
 
-@dataclass
-class SubTask:
-    id: str
-    objective: str
-    depends_on: List[str] = field(default_factory=list)
-    status: str = "pending"      # pending | running | done | error
-    result: str = ""
-
-    def as_dict(self) -> Dict[str, Any]:
-        return {"id": self.id, "objective": self.objective,
-                "depends_on": list(self.depends_on),
-                "status": self.status, "result": self.result}
+# El plan vive en el backbone de estado; una sola definición de SubTask.
+from core.orchestration_state import SubTask  # noqa: E402  (re-exportado acá)
 
 
 _PLAN_PROMPT = (

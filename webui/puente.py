@@ -646,9 +646,10 @@ class Puente:
         ses["state"].scope_confirmed = bool(ok); ses["state"].save()
         return {"ok": True}
 
-    def orq_ejecutar(self, run_id: str) -> Dict[str, Any]:
+    def orq_ejecutar(self, run_id: str, supervisar: bool = True) -> Dict[str, Any]:
         """Fase B: con el plan aprobado, corre los workers. Si la categoría pide
-        scope y no está confirmado, frena y lo pide."""
+        scope y no está confirmado, frena y lo pide. `supervisar` activa el
+        steering (el orquestador corrige/redirige workers mal encaminados)."""
         ses = self._orq_sesiones.get(run_id)
         if not ses:
             return {"ok": False}
@@ -658,10 +659,11 @@ class Puente:
                     "categoria": cls.get("category")}
         self._enjambre_cancelado = False
         self._workers_activos = []
-        threading.Thread(target=self._worker_orq_ejecutar, args=(run_id,), daemon=True).start()
+        threading.Thread(target=self._worker_orq_ejecutar,
+                         args=(run_id, bool(supervisar)), daemon=True).start()
         return {"ok": True}
 
-    def _worker_orq_ejecutar(self, run_id):
+    def _worker_orq_ejecutar(self, run_id, supervisar=True):
         try:
             from core import orchestrator as orq
             from core import planning
@@ -673,18 +675,20 @@ class Puente:
             state.status = RUNNING; state.save()
 
             def ev_worker(wid, kind, data):
-                tipo = "worker_think" if kind == "think" else "worker_tool"
-                clave = "text" if kind == "think" else "ev"
+                tipo = {"think": "worker_think", "steer": "worker_steer"}.get(kind, "worker_tool")
+                clave = {"think": "text", "steer": "steer"}.get(kind, "ev")
                 self._js("orqEvento", {"type": tipo, "run_id": run_id, "id": wid, clave: data})
+
+            # review/síntesis + supervisión con el modelo por categoría (fallback incluido).
+            _mo = planning.make_orchestrator_llm(cls.get("category"))
+            plan_llm = lambda prompt, on_token=None: _mo(
+                [{"role": "user", "content": prompt}], on_token)
 
             workers_dir = runs_dir() / run_id / "workers"
             run_worker = orq.deepseek_worker_runner(
                 tools=True, registry=self._workers_activos, on_event=ev_worker,
-                base_dir=workers_dir)
-            # review/síntesis con el modelo por categoría (fallback incluido).
-            _mo = planning.make_orchestrator_llm(cls.get("category"))
-            plan_llm = lambda prompt, on_token=None: _mo(
-                [{"role": "user", "content": prompt}], on_token)
+                base_dir=workers_dir,
+                supervisor=(_mo if supervisar else None), max_corrections=2)
 
             def prog(ev):
                 self._js("orqEvento", {**ev, "run_id": run_id})

@@ -76,6 +76,8 @@
   .exec.think pre { background:#faf8ff; color:#2a2340; }
   .wtools { padding:4px 12px 0; }
   .wtool { font:12px Menlo,monospace; color:#0e7490; padding:2px 0; white-space:pre-wrap; word-break:break-word; }
+  .wtool.steer { color:#7c4dff; font-weight:600; }
+  .arbol-nodo.corregido summary { background:#f6f3ff; }
   .exec.vivo { border-color:var(--acento); background:#f6f3ff; }
   .exec.vivo.err { border-color:var(--error); background:#fff4f3; }
   .exec.vivo.err .estado { color:var(--error); }
@@ -351,6 +353,7 @@
           <textarea id="enj-tarea" rows="2" placeholder="Tarea para el orquestador… Primero se planifica (podés ajustar), después ejecuta."></textarea>
           <div class="enj-row">
             <label><input id="enj-frac" type="checkbox" checked> fraccionar la tarea</label>
+            <label><input id="enj-super" type="checkbox" checked> 👁 supervisar workers</label>
             <button id="enj-iniciar" onclick="enjIniciar()">🧠 Planificar</button>
             <button id="enj-detener" onclick="enjDetener()" disabled>⏹ Detener</button>
             <span id="enj-estado"></span>
@@ -1115,7 +1118,7 @@
     await window.pywebview.api.orq_editar_plan(orqRun, orqPlanActual);
     enjSetCorriendo(true); enjSetFaseA(false);
     $("#enj-estado").textContent = "⚙ ejecutando…";
-    const r = await window.pywebview.api.orq_ejecutar(orqRun);
+    const r = await window.pywebview.api.orq_ejecutar(orqRun, $("#enj-super").checked);
     if (r && r.needs_scope){
       enjSetCorriendo(false);
       const ok = await confirmarSimple("⚠️ Confirmar alcance / autorización",
@@ -1168,6 +1171,14 @@
       const d = orqNodoWorker(ev.id,""); const cont = d.querySelector(".wtools"); const e = ev.ev||{};
       if (e.fase==="inicio"){ const ln=document.createElement("div"); ln.className="wtool"; ln.textContent="🔧 "+(e.tool||"")+" "+(e.args||""); cont.appendChild(ln); }
       else if (e.fase==="fin"){ const l=cont.querySelectorAll(".wtool"); const ln=l[l.length-1]; if(ln) ln.textContent += "  "+(e.ok?"✓":"✗")+" "+(e.resumen||""); }
+      return;
+    }
+    if (t === "worker_steer"){
+      const d = orqNodoWorker(ev.id,""); const cont = d.querySelector(".wtools");
+      const s = ev.steer || {};
+      const ln = document.createElement("div"); ln.className = "wtool steer";
+      ln.textContent = (s.verdict === "abort" ? "⛔ abortado" : "↻ corrección #" + (s.iter||"")) + ": " + (s.feedback||"");
+      cont.appendChild(ln); d.classList.add("corregido");
       return;
     }
     if (t === "worker_done"){

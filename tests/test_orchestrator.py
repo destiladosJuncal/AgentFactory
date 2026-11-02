@@ -189,6 +189,69 @@ def test_run_con_plan_aprobado_no_replanifica_y_muta_estado():
     assert aprobado[1].result == "resultado-b"     # respetó la dependencia y corrió
 
 
+def test_steering_redirect_luego_ok(monkeypatch):
+    # El worker corre; el supervisor dice 'redirect' con feedback -> el worker
+    # rehace (misma conversación) -> 'ok'. Debe quedar registrado en history.
+    import core.orchestrator as orqmod
+    from core.orchestration_state import SubTask
+
+    turnos = []
+    class FakeChat:
+        cancelado = False
+        def enviar(self, prompt, al_fragmento=None, al_evento=None):
+            turnos.append(prompt)
+            return f"intento-{len(turnos)}"
+    class FakeGestor:
+        def __init__(self, *a): pass
+        def crear_conversacion(self, nombre): return "/tmp/x"
+    monkeypatch.setattr(orqmod, "GestorConversaciones", FakeGestor, raising=False)
+    # parchear imports locales dentro de run()
+    import core.conversaciones, core.chat, core.proveedores
+    monkeypatch.setattr(core.conversaciones, "GestorConversaciones", FakeGestor)
+    monkeypatch.setattr(core.chat, "ConversacionChat", lambda d: FakeChat())
+    monkeypatch.setattr(core.proveedores, "crear_proveedor", lambda *a, **k: None)
+
+    veredictos = iter([
+        '{"verdict":"redirect","feedback":"faltó el punto B"}',
+        '{"verdict":"ok"}',
+    ])
+    supervisor = lambda messages, on_token=None: next(veredictos)
+    eventos = []
+    runner = orqmod.deepseek_worker_runner(
+        tools=False, supervisor=supervisor, max_corrections=2,
+        on_event=lambda wid, kind, data: eventos.append((kind, data)))
+    sub = SubTask(id="a", objective="hacer A y B", deliverable="informe")
+    res = runner(sub, {})
+    assert res == "intento-2"                 # rehízo una vez tras la corrección
+    assert len(turnos) == 2
+    assert any(k == "steer" for k, _ in eventos)
+    assert sub.history and sub.history[0]["kind"] == "redirect"
+
+
+def test_steering_respeta_tope(monkeypatch):
+    import core.orchestrator as orqmod
+    from core.orchestration_state import SubTask
+    import core.conversaciones, core.chat, core.proveedores
+    turnos = []
+    class FakeChat:
+        cancelado = False
+        def enviar(self, prompt, al_fragmento=None, al_evento=None):
+            turnos.append(1); return "x"
+    class FakeGestor:
+        def __init__(self, *a): pass
+        def crear_conversacion(self, n): return "/tmp/x"
+    monkeypatch.setattr(core.conversaciones, "GestorConversaciones", FakeGestor)
+    monkeypatch.setattr(core.chat, "ConversacionChat", lambda d: FakeChat())
+    monkeypatch.setattr(core.proveedores, "crear_proveedor", lambda *a, **k: None)
+    supervisor = lambda messages, on_token=None: '{"verdict":"redirect","feedback":"más"}'
+    runner = orqmod.deepseek_worker_runner(tools=False, supervisor=supervisor, max_corrections=2)
+    sub = SubTask(id="a", objective="o")
+    runner(sub, {})
+    # 1 turno inicial + 2 correcciones (tope) = 3
+    assert len(turnos) == 3
+    assert len(sub.history) == 2
+
+
 def test_progreso_emite_eventos():
     eventos = []
     orq = FakeOrq(plan=[{"id": "a", "objective": "A"}],

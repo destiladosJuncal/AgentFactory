@@ -338,11 +338,43 @@ def default_fractioner(minimo: int = 1) -> Callable[[str], List[str]]:
     return frac
 
 
+_SUPERVISE_PROMPT = (
+    "Sos el ORQUESTADOR supervisando a un worker. Objetivo de la sub-tarea:\n"
+    "{objective}\n"
+    "Entregable esperado: {deliverable}\n\n"
+    "El worker reportó:\n{result}\n\n"
+    "¿Está bien encaminado y es suficiente para el objetivo/entregable? Respondé "
+    'SOLO un objeto JSON: {{"verdict": "ok"|"redirect"|"abort", "feedback": '
+    '"corrección concreta si no está ok"}}.\n'
+    "- ok: cumple el objetivo.\n"
+    "- redirect: está flojo/incompleto/desviado -> dale una corrección concreta "
+    "(qué rehacer o hacia dónde reorientar).\n"
+    "- abort: solo si es inviable."
+)
+
+
+def _supervise(supervisor, sub: SubTask, result: str) -> Dict[str, Any]:
+    """El orquestador evalúa el resultado del worker. Nunca levanta; ante duda
+    devuelve 'ok' para no trabar el avance."""
+    try:
+        reply = supervisor([{"role": "user", "content": _SUPERVISE_PROMPT.format(
+            objective=sub.objective, deliverable=sub.deliverable or "(no especificado)",
+            result=(result or "")[:4000])}])
+    except Exception:
+        return {"verdict": "ok"}
+    obj = _extract_json(reply, "{", "}")
+    if not isinstance(obj, dict) or obj.get("verdict") not in ("ok", "redirect", "abort"):
+        return {"verdict": "ok"}
+    return obj
+
+
 def deepseek_worker_runner(tools: bool = True,
                            worker_provider: str = "deepseek",
                            registry: Optional[list] = None,
                            on_event: Optional[Callable[[str, str, Any], None]] = None,
-                           base_dir=None) -> WorkerRunner:
+                           base_dir=None,
+                           supervisor: Optional[Callable[..., str]] = None,
+                           max_corrections: int = 2) -> WorkerRunner:
     """Each sub-task runs as a DeepSeek agent (its own conversation, full tool
     loop and confirmation guard when ``tools`` is on). Returns the worker's final
     text. If ``registry`` is given, each worker's chat is appended to it so the
@@ -378,5 +410,27 @@ def deepseek_worker_runner(tools: bool = True,
                   f"result concretely:\n\n{sub.objective}{ctx}")
         al_fragmento = (lambda t: on_event(sub.id, "think", t)) if on_event else None
         al_evento = (lambda ev: on_event(sub.id, "tool", ev)) if on_event else None
-        return chat.enviar(prompt, al_fragmento=al_fragmento, al_evento=al_evento)
+        result = chat.enviar(prompt, al_fragmento=al_fragmento, al_evento=al_evento)
+
+        # STEERING: el orquestador revisa y puede corregir/redirigir, reusando la
+        # MISMA conversación del worker, hasta `max_corrections` veces.
+        if supervisor is not None:
+            for i in range(max(0, int(max_corrections))):
+                v = _supervise(supervisor, sub, result)
+                verdict = v.get("verdict")
+                if verdict == "ok":
+                    break
+                fb = (v.get("feedback") or "").strip()
+                sub.log(verdict, fb)
+                if on_event:
+                    on_event(sub.id, "steer", {"verdict": verdict, "feedback": fb, "iter": i + 1})
+                if verdict == "abort":
+                    result += f"\n\n[orquestador abortó la sub-tarea: {fb}]"
+                    break
+                # redirect: le mandamos la corrección y que rehaga.
+                result = chat.enviar(
+                    f"Corrección del orquestador: {fb}\n\nAjustá tu trabajo según esto "
+                    f"y reportá el resultado corregido.",
+                    al_fragmento=al_fragmento, al_evento=al_evento)
+        return result
     return run

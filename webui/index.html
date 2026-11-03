@@ -148,6 +148,9 @@
   .mbtn .mperm { background:var(--panel); border:1px solid #c8ccd4; }
   .mbtn .msiempre { background:var(--agente); color:#fff; }
   .modal.ancho { max-width:640px; }
+  .sec-row { display:flex; align-items:center; gap:12px; padding:7px 0; border-bottom:1px solid var(--borde); max-width:720px; }
+  .sec-et { font-weight:600; min-width:180px; }
+  .sec-in-et, .sec-in-val { width:100%; border:1px solid #c8ccd4; border-radius:8px; padding:8px 10px; font-size:14px; }
   .conf-det { background:#0f1115; color:#e7eaf1; border-radius:8px; padding:12px;
               font:12px Menlo,monospace; white-space:pre-wrap; word-break:break-word;
               max-height:300px; overflow:auto; margin:0; }
@@ -354,6 +357,18 @@
           <button id="comp-btn" onclick="comprimirViejas()"
                   style="background:var(--panel);border:1px solid #c8ccd4">🗜️ Comprimir</button>
           <span id="comp-estado"></span>
+        </div>
+
+        <h2 style="margin-top:30px">🔒 Secretos para los agentes</h2>
+        <p class="sub">Credenciales (tokens, API keys) que los agentes pueden <b>usar</b>
+           sin <b>verlas</b>: se guardan cifradas y el agente las referencia por nombre con
+           <code>{{secreto:ETIQUETA}}</code>. El valor nunca llega al modelo; cada uso te pide
+           confirmación. El agente también puede pedir una credencial nueva y se te abre una ventana.</p>
+        <div id="sec-lista"></div>
+        <div class="acciones" style="padding-left:0">
+          <button id="sec-add" onclick="agregarSecreto()"
+                  style="background:var(--panel);border:1px solid #c8ccd4">＋ Agregar secreto</button>
+          <span id="sec-estado"></span>
         </div>
       </div>
     </section>
@@ -953,7 +968,72 @@
     }
     $("#cfg-estado").textContent = "";
     previewComprimir();
+    cargarSecretos();
   }
+
+  // ---- bóveda de secretos ----
+  async function cargarSecretos(){
+    let etqs = [];
+    try { etqs = await window.pywebview.api.boveda_listar(); } catch(e){ return; }
+    const cont = $("#sec-lista"); cont.innerHTML = "";
+    if (!etqs.length){ cont.innerHTML = `<div class="n" style="padding:4px 0">No hay secretos guardados.</div>`; return; }
+    for (const et of etqs){
+      const row = document.createElement("div"); row.className = "sec-row";
+      row.innerHTML = `<span class="sec-et">🔒 ${escapar(et)}</span>`
+        + `<code class="n">{{secreto:${escapar(et)}}}</code>`
+        + `<button class="mini sec-del">🗑</button>`;
+      row.querySelector(".sec-del").onclick = async () => {
+        if (!await confirmarSimple("Borrar secreto", "¿Borrar <b>"+escapar(et)+"</b>? El agente dejará de poder usarlo.", "Borrar")) return;
+        await window.pywebview.api.boveda_borrar(et); cargarSecretos();
+      };
+      cont.appendChild(row);
+    }
+  }
+  async function agregarSecreto(){
+    const r = await secretoModal({etiqueta:"", motivo:"", editable:true});
+    if (!r) return;
+    const resp = await window.pywebview.api.boveda_guardar(r.etiqueta, r.valor);
+    const est = $("#sec-estado");
+    if (resp.ok){ est.textContent = "✅ guardado"; est.className="ok"; cargarSecretos(); }
+    else { est.textContent = "❌ "+(resp.error||"no se pudo"); est.className="err"; }
+    setTimeout(()=>{ est.textContent=""; }, 2500);
+  }
+  // Modal de ingreso de secreto. Devuelve {etiqueta, valor} o null (cancelado).
+  function secretoModal({etiqueta, motivo, editable}){
+    return new Promise(res => {
+      const ov = document.createElement("div"); ov.className = "modal-ov";
+      ov.innerHTML = `<div class="modal ancho"><h3>🔒 Ingresar secreto</h3>`
+        + (motivo ? `<p>${escapar(motivo)}</p>` : `<p class="n">Se guarda cifrado. El agente lo usa por nombre, nunca ve el valor.</p>`)
+        + `<label class="n">Etiqueta</label>`
+        + `<input class="sec-in-et" value="${escapAttr(etiqueta||"")}" ${editable?"":"readonly"} placeholder="GITHUB_TOKEN">`
+        + `<label class="n" style="margin-top:8px;display:block">Valor</label>`
+        + `<input class="sec-in-val" type="password" placeholder="pegá el token/clave acá">`
+        + `<div class="mbtn"><button class="mno">Cancelar</button><button class="msi">Guardar</button></div></div>`;
+      document.body.appendChild(ov);
+      const inEt = ov.querySelector(".sec-in-et"), inVal = ov.querySelector(".sec-in-val");
+      (editable ? inEt : inVal).focus();
+      const cerrar = (v) => { ov.remove(); res(v); };
+      ov.querySelector(".mno").onclick = () => cerrar(null);
+      ov.querySelector(".msi").onclick = () => {
+        const et = inEt.value.trim(), val = inVal.value;
+        if (!et || !val) { inVal.style.borderColor = "var(--error)"; return; }
+        cerrar({etiqueta: et, valor: val});
+      };
+      inVal.addEventListener("keydown", e => { if (e.key==="Enter") ov.querySelector(".msi").click(); });
+    });
+  }
+  // Pedido del AGENTE: etiqueta fija, devuelve el valor al puente (nunca al modelo).
+  const secretoModales = {};
+  async function secretoPedir(sid, etiqueta, motivo){
+    secretoCerrar(sid);
+    const prom = secretoModal({etiqueta, motivo: motivo || ("El agente necesita la credencial “"+etiqueta+"”."), editable:false});
+    secretoModales[sid] = true;
+    const r = await prom;
+    delete secretoModales[sid];
+    window.pywebview.api.secreto_responder(sid, r ? r.valor : null);
+  }
+  function secretoCerrar(sid){ delete secretoModales[sid]; }
+
   function cfgCambios() {
     const cambios = {};
     for (const inp of $("#cfg-campos").querySelectorAll("input")) {

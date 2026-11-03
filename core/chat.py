@@ -23,6 +23,7 @@ from core.paquetes import (TOOLS_SCHEMA_PAQUETES, ejecutar_tool_paquetes)
 from core.procesador import ejecutar_tool_procesador, TOOLS_SCHEMA_PROCESADOR
 from core.proxy_tool import ejecutar_tool_proxy, TOOLS_SCHEMA_PROXY
 from core.tarea_tool import ejecutar_tool_tarea, TOOLS_SCHEMA_TAREA
+from core.boveda import ejecutar_tool_secreto, TOOLS_SCHEMA_SECRETOS
 from core.redactor import redactar as _redactar_salida
 from core.ejecucion import ejecutar_tool_ejecucion, TOOLS_SCHEMA_EJECUCION
 from core.utils_tools import resumen_tool, resumen_args
@@ -37,6 +38,7 @@ NOMBRES_TOOLS_PAQUETES = {t["function"]["name"] for t in TOOLS_SCHEMA_PAQUETES}
 NOMBRES_TOOLS_PROCESADOR = {t["function"]["name"] for t in TOOLS_SCHEMA_PROCESADOR}
 NOMBRES_TOOLS_PROXY = {t["function"]["name"] for t in TOOLS_SCHEMA_PROXY}
 NOMBRES_TOOLS_TAREA = {t["function"]["name"] for t in TOOLS_SCHEMA_TAREA}
+NOMBRES_TOOLS_SECRETOS = {t["function"]["name"] for t in TOOLS_SCHEMA_SECRETOS}
 NOMBRES_TOOLS_EJECUCION = {t["function"]["name"] for t in TOOLS_SCHEMA_EJECUCION}
 
 MAX_MENSAJES_CONTEXTO = None  # cuántos mensajes recientes se mandan al modelo;
@@ -440,6 +442,7 @@ class ConversacionChat:
                 + sorted(NOMBRES_TOOLS_ITERACION) + sorted(NOMBRES_TOOLS_EJECUCION)
                 + sorted(NOMBRES_TOOLS_PAQUETES)
                 + sorted(NOMBRES_TOOLS_PROXY) + sorted(NOMBRES_TOOLS_TAREA)
+                + sorted(NOMBRES_TOOLS_SECRETOS)
                 + (sorted(NOMBRES_TOOLS_PROCESADOR) if self.fraccionar else []))
 
     def _persistir(self):
@@ -495,6 +498,8 @@ class ConversacionChat:
             return ejecutar_tool_proxy(nombre, args, redactar=not self.proxy_secretos)
         if nombre in NOMBRES_TOOLS_TAREA:
             return ejecutar_tool_tarea(nombre, args, conversacion=self.conversacion_dir.name)
+        if nombre in NOMBRES_TOOLS_SECRETOS:
+            return ejecutar_tool_secreto(nombre, args)
         if nombre in NOMBRES_TOOLS_PAQUETES:
             # permisos: el "permitir siempre" de ESTA conversación, para que
             # instalar_paquete pueda confirmar como lo hace ejecutar_shell.
@@ -545,7 +550,7 @@ class ConversacionChat:
             tools = (TOOLS_PROYECTO + TOOLS_SCHEMA_BIBLIOTECA
                      + TOOLS_SCHEMA_ITERACION + TOOLS_SCHEMA_EJECUCION
                      + TOOLS_SCHEMA_PAQUETES
-                     + TOOLS_SCHEMA_PROXY + TOOLS_SCHEMA_TAREA)
+                     + TOOLS_SCHEMA_PROXY + TOOLS_SCHEMA_TAREA + TOOLS_SCHEMA_SECRETOS)
             if self.fraccionar:
                 tools = tools + TOOLS_SCHEMA_PROCESADOR
         n_bib = self.biblioteca.listar().get('total', 0)

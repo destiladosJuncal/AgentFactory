@@ -41,10 +41,20 @@ def _valores_env():
     return vals
 
 
+def _valores_boveda():
+    """Valores de la bóveda de secretos del agente, para tacharlos de la salida
+    aunque un script los imprima."""
+    try:
+        from core import boveda
+        return boveda.valores()
+    except Exception:
+        return set()
+
+
 def redactar(texto: str) -> str:
     if not texto:
         return texto
-    for v in _valores_env():
+    for v in _valores_env() | _valores_boveda():
         if v in texto:
             texto = texto.replace(v, MARCA)
     texto = _JWT.sub(MARCA, texto)

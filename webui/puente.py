@@ -47,6 +47,12 @@ class Puente:
         self._confirm_seq = 0
         from core import ejecucion
         ejecucion.registrar_confirmador(self._confirmar_desde_hilo)
+        # Bóveda de secretos: cuando el agente pide una credencial, se le abre una
+        # ventana a la persona para ingresarla (el agente nunca ve el valor).
+        self._secretos_pendientes: Dict[str, Any] = {}
+        self._secreto_seq = 0
+        from core import boveda
+        boveda.registrar_solicitador(self._pedir_secreto_desde_hilo)
 
     # -- JS helper ----------------------------------------------------------
 
@@ -423,6 +429,52 @@ class Puente:
                 caja.append("no")
             evento.set()
             self._js("confirmarCerrar", cid)
+
+    # -- bóveda de secretos -------------------------------------------------
+
+    def _pedir_secreto_desde_hilo(self, etiqueta: str, motivo: str):
+        """Lo llama core.boveda desde el hilo del agente: abre la ventana de
+        ingreso y BLOQUEA hasta que la persona escribe el valor (o cancela).
+        Devuelve el valor (string) o None. El agente nunca lo ve."""
+        if self.window is None:
+            return None
+        evento, caja = threading.Event(), []
+        with self._confirm_lock:
+            self._secreto_seq += 1
+            sid = f"s{self._secreto_seq}"
+            self._secretos_pendientes[sid] = (evento, caja)
+        self._js("secretoPedir", sid, etiqueta, motivo or "")
+        if not evento.wait(timeout=300):
+            self._js("secretoCerrar", sid)
+            with self._confirm_lock:
+                self._secretos_pendientes.pop(sid, None)
+            return None
+        with self._confirm_lock:
+            self._secretos_pendientes.pop(sid, None)
+        return caja[0] if caja else None
+
+    def secreto_responder(self, sid: str, valor) -> Dict[str, Any]:
+        """El front devuelve el valor ingresado (o null si canceló)."""
+        with self._confirm_lock:
+            par = self._secretos_pendientes.get(sid)
+        if par is None:
+            return {"ok": False}
+        evento, caja = par
+        caja.append(valor if valor else None)
+        evento.set()
+        return {"ok": True}
+
+    def boveda_listar(self) -> List[str]:
+        from core import boveda
+        return boveda.etiquetas()
+
+    def boveda_guardar(self, etiqueta: str, valor: str) -> Dict[str, Any]:
+        from core import boveda
+        return boveda.guardar(etiqueta, valor)
+
+    def boveda_borrar(self, etiqueta: str) -> Dict[str, Any]:
+        from core import boveda
+        return boveda.borrar(etiqueta)
 
     # -- configuración ------------------------------------------------------
 

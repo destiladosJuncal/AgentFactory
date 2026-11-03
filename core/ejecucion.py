@@ -429,6 +429,31 @@ def _cwd(directorio: Optional[str], por_defecto: Path) -> Tuple[Optional[Path], 
     return ruta, None
 
 
+def _preparar_secretos(texto: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Si `texto` usa {{secreto:ETIQUETA}}, confirma el uso (siempre) y sustituye
+    los valores reales SOLO para la ejecución. Devuelve (texto_real, error|None).
+    El `texto` original (con placeholders) es el que se loguea/guarda."""
+    from core import boveda
+    etiquetas = boveda.etiquetas_en(texto)
+    if not etiquetas:
+        return texto, None
+    faltan = [e for e in etiquetas if not boveda.tiene(e)]
+    if faltan:
+        return texto, {"error": (f"Secreto(s) no cargado(s): {', '.join(faltan)}. "
+                                 f"Pedilos con la herramienta pedir_secreto antes de usarlos."),
+                       "requeria_confirmacion": True}
+    if CONFIRMADOR is None:
+        return texto, {"error": "Este modo no puede confirmar el uso de secretos; no ejecuto."}
+    detalle = (f"El comando usa el/los secreto(s): {', '.join(etiquetas)}.\n\n{texto}\n\n"
+               "Al aprobar, AgentFactory sustituye el valor real SOLO en esta ejecución; "
+               "el valor no se guarda en el historial ni se muestra en la salida.")
+    decision = CONFIRMADOR(f"usa el/los secreto(s): {', '.join(etiquetas)}", detalle, "secreto")
+    if decision not in ("permitir", "siempre"):
+        return texto, {"error": "No autorizaste el uso del secreto."}
+    real, _usadas, _faltan = boveda.sustituir(texto)
+    return real, None
+
+
 def ejecutar_shell(comando: str, directorio: str = "", timeout: Any = TIMEOUT_DEFAULT,
                    base: Optional[Path] = None, permisos: Optional[set] = None,
                    como_admin: bool = False, admin_habilitado: bool = False) -> Dict[str, Any]:
@@ -478,8 +503,11 @@ def ejecutar_shell(comando: str, directorio: str = "", timeout: Any = TIMEOUT_DE
         # En POSIX se sigue forzando bash y no $SHELL: el schema de la tool le
         # promete bash al modelo, y en una Mac moderna $SHELL es zsh.
         extra = {} if plataforma.ES_WINDOWS else {"executable": "/bin/bash"}
+        comando_real, err_sec = _preparar_secretos(comando)
+        if err_sec:
+            return err_sec
         proc = subprocess.run(
-            comando, shell=True, cwd=str(cwd), capture_output=True, text=True,
+            comando_real, shell=True, cwd=str(cwd), capture_output=True, text=True,
             encoding=plataforma.codificacion_consola(), errors="replace",
             timeout=_timeout(timeout), **extra,
             # PYTHONPATH apuntando al almacén compartido (+ overlay local): así
@@ -509,9 +537,12 @@ def ejecutar_python(codigo: str, directorio: str = "", timeout: Any = TIMEOUT_DE
     if bloqueo:
         return bloqueo
 
+    codigo_real, err_sec = _preparar_secretos(codigo)
+    if err_sec:
+        return err_sec
     with tempfile.TemporaryDirectory(prefix="ejec_py_") as tmp:
         script = Path(tmp) / "script.py"
-        script.write_text(codigo, encoding="utf-8")
+        script.write_text(codigo_real, encoding="utf-8")
         try:
             from core import paquetes
             proc = subprocess.run(

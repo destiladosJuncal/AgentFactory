@@ -1,14 +1,20 @@
 # AgentFactory
 
-Conversational desktop assistant (Python + Tkinter) that runs on
-**Windows 10/11**, **macOS** (Apple Silicon and Intel) and **Linux** (Debian/RHEL
-and derivatives) from the same code.
+Conversational desktop assistant (Python, with a web UI and a Tkinter fallback)
+that runs on **Windows 10/11**, **macOS** (Apple Silicon and Intel) and **Linux**
+(Debian/RHEL and derivatives) from the same code.
 
-It's not just a chat with a model. The three things that set it apart:
+It's not just a chat with a model. What sets it apart:
 
 - **It builds tools and keeps them.** The iterative mode writes code, runs it,
   scores it, and retries until it works. Whatever comes out well is published to
   a shared library and stays available for the next conversation.
+- **It orchestrates a team of agents.** A lead model (Opus) plans the task, splits
+  it into subtasks and supervises; cheap workers (DeepSeek) run them in parallel.
+  You see and edit the plan before it runs, and can steer or resume it.
+- **It uses your credentials without seeing them.** A secrets vault: the agent
+  asks for a token by label, you type it into a window, it's stored encrypted, and
+  the value is injected only at execution time — it never reaches the model.
 - **It captures what you browse.** A built-in proxy (mitmproxy → SQLite) records
   the web traffic, so the agent can infer which site you're talking about and
   extract what you saw, without you having to copy and paste anything.
@@ -100,13 +106,18 @@ what happened, instead of failing only when you try to chat.
 ### Conversations
 
 Each conversation is a folder with its own history, workspace and permissions.
-The agent has **21 tools**: read and write files, run shell and Python, install
-packages, query the proxy capture, plus the library and iterative-mode tools
-described below.
+The agent has **26 tools**: read and write files, run shell and Python, install
+packages, query the proxy capture, request secrets from the vault, plus the
+library and iterative-mode tools described below.
 
 The transcript renders as Markdown: tables, code with a run button, and images
-shown inline. Below each message you get the tokens and the estimated cost of the
-call.
+shown inline — local files the agent generates are embedded automatically, so they
+display even though the web view can't load them from disk. Below each message you
+get the tokens, the estimated cost **and how long the call took**, a **copy
+button** to grab the whole reply, and the shell commands and tools the agent ran.
+
+A **search box** filters the conversation sidebar, and from Settings you can
+**compress old conversations** to keep their context light.
 
 ### The shared library
 
@@ -148,6 +159,30 @@ It can be used two ways:
 Projects are persistent: a run kicked off from the chat creates a normal project
 you can keep iterating by hand afterwards.
 
+### Orchestrated agents
+
+For a task too big or too broad for a single pass, a **lead model orchestrates a
+team**, in two phases:
+
+- **Plan.** You talk to the orchestrator (Opus by default) first. It breaks the
+  task into subtasks —each with its objective, boundaries and expected
+  deliverable— or asks you questions if something's unclear. You see the plan and
+  can edit it before anything runs.
+- **Execute.** Once approved, the subtasks go to **workers** (DeepSeek) that run
+  in parallel, respecting the dependencies between them. Each worker has the full
+  tool set. The orchestrator reviews the results, can **steer** a worker that's
+  off track (redirect its objective mid-flight) or re-plan, and finally
+  synthesizes the answer.
+
+You can watch both the orchestrator's and the workers' reasoning live. Runs are
+persistent: a **runs sidebar** lists past orchestrations, each one expandable into
+a tree (orchestrator + its workers), and an interrupted run can be **resumed**
+from where it stopped — finished subtasks aren't redone.
+
+A typed classifier (TypeSafe's **Jev**, not an LLM) routes each incoming task:
+simple ones are answered directly, complex ones go to the orchestrator, and the
+task's category decides which orchestrator model to use.
+
 ### "Yes to everything"
 
 It's narrower than it sounds, and it's worth understanding exactly what it does.
@@ -179,6 +214,19 @@ edited request.
 
 The security section covers how your session credentials are handled when you
 automate sites with login.
+
+### Secrets vault
+
+When the automation needs a credential —an API token, a password— the agent
+**doesn't ask you for it in the chat**, where it would land in the model's
+context. It calls `pedir_secreto` with a label and a reason; a window pops up, you
+type the value, and it's stored **encrypted** under that label. The agent gets
+back only a confirmation and a placeholder (`{{secreto:LABEL}}`) to drop into its
+commands. The real value is substituted **only at execution time**, on your
+machine, after you approve that use — and it's scrubbed from anything sent to the
+model. The agent can list the labels and request a value, but **never reads it**:
+AgentFactory holds the secret, not the LLM. The security section has the threat
+model and its honest limit.
 
 ### Scheduled tasks
 
@@ -238,12 +286,15 @@ per-OS branch goes there, not scattered across the UI.
 |---|---|
 | `INICIAR.bat` / `INICIAR.command` | Portable per-platform launch: they get a usable Python |
 | `bootstrap.py` | Virtual environment, dependencies and launch (cross-platform) |
-| `main_ui.py` | The UI (Tkinter) |
+| `main_web.py` · `webui/` | The default UI (pywebview web view); `AGENTE_UI=tk` falls back to Tkinter |
+| `main_ui.py` | The Tkinter UI (fallback) |
 | `core/plataforma.py` | The only layer that knows about differences between systems |
 | `core/interprete.py` | Which Python to use to run scripts (includes the packaged case) |
 | `core/chat.py` | The conversation and the tool-calling loop |
 | `core/biblioteca.py` | The shared library of modules |
 | `core/generador.py` · `core/evaluador.py` | The iterative engine and its scoring |
+| `core/orchestrator.py` · `core/orchestration_state.py` · `core/planning.py` · `core/classifier.py` | The orchestrator, its persisted state, the planning phase and the Jev router |
+| `core/boveda.py` · `core/secretos.py` | The secrets vault and encryption at rest |
 | `core/programador*.py` | Tasks: common front + launchd / Task Scheduler / systemd backend |
 | `core/proxy.py` · `core/marcas.py` | Traffic capture, redaction and context |
 | `core/ejecucion.py` | Command execution, with confirmation of destructive ones |
@@ -330,9 +381,13 @@ cookies are part of the material it works with. How it treats them:
 
 **What the model sees.** The context passed to the model is redacted: session
 cookies, `Authorization` and CSRF tokens go out masked (`core/marcas.py`). The
-bulk read used to write an extraction (`extraer_de_captura`) returns the response
-bodies and **no headers**. The idea is that the model doesn't need to see a
-cookie's value to write the code that uses it.
+bulk read used to write an extraction (`extraer_de_captura`) and the single-flow
+body view (`ver_cuerpo_flujo`) return bodies and **no headers at all**. The tool
+that *does* return headers (`contexto_flujo_proxy`) masks **only the secrets** —
+session cookies, `Authorization`, CSRF— and leaves the rest visible (`user-agent`,
+`accept-language`, `origin`, `referer`, …), so the agent can still reason about
+and compare a request. The idea is that the model doesn't need to see a cookie's
+value to write the code that uses it.
 
 On top of that there's an **output filter** (`core/redactor.py`) that covers what
 `marcas.py` doesn't catch: it masks `.env` values, JWTs, `Bearer` and assignments
@@ -361,9 +416,24 @@ reduce accidental exposure and make deliberate exposure visible, they don't buil
 a safe against the agent itself. For the stolen-disk case, the right tool is
 BitLocker or FileVault, not application-level encryption.
 
-In progress: encrypting the headers at rest with decoding requested explicitly
-(the same "allow once / always allow" mechanism as destructive commands), so that
-access to credentials is a consented act and not a side effect.
+The captured headers are now stored **encrypted at rest** (`core/secretos.py`;
+old captures are migrated on open), and the **secrets vault** below turns
+credential use into a consented act rather than a side effect.
+
+### The secrets vault
+
+The vault (`core/boveda.py`) lets the agent *use* a secret without ever *seeing*
+it. The agent requests a value by label (`pedir_secreto`); you type it into a
+window and it's saved encrypted. From then on the agent works with a placeholder
+(`{{secreto:LABEL}}`), and the real value is substituted only when a command
+actually runs —on your machine, after you approve that specific use— and is
+stripped from everything sent to the model (`core/redactor.py`).
+
+**The honest limit.** This keeps the value out of the model's context and makes
+every use visible and consented; it is **not** a sandbox against the agent. The
+agent runs code as your user, so a script it writes can read what you can read.
+What the vault guarantees is narrower and real: the secret never travels to the
+LLM provider, and AgentFactory —not the model— decides when it's used.
 
 ### Captured content = data, not instructions
 

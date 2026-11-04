@@ -9,9 +9,10 @@ It's not just a chat with a model. What sets it apart:
 - **It builds tools and keeps them.** The iterative mode writes code, runs it,
   scores it, and retries until it works. Whatever comes out well is published to
   a shared library and stays available for the next conversation.
-- **It orchestrates a team of agents.** A lead model (Opus) plans the task, splits
-  it into subtasks and supervises; cheap workers (DeepSeek) run them in parallel.
-  You see and edit the plan before it runs, and can steer or resume it.
+- **It orchestrates a team of agents** *(experimental)*. A lead model (Opus) plans
+  the task, splits it into subtasks and supervises; cheap workers (DeepSeek) run
+  them in parallel. You see and edit the plan before it runs, and can steer or
+  resume it. Still a work in progress — see the caveat in its section.
 - **It uses your credentials without seeing them.** A secrets vault: the agent
   asks for a token by label, you type it into a window, it's stored encrypted, and
   the value is injected only at execution time — it never reaches the model.
@@ -160,6 +161,12 @@ Projects are persistent: a run kicked off from the chat creates a normal project
 you can keep iterating by hand afterwards.
 
 ### Orchestrated agents
+
+> **Experimental.** This is a work in progress and does **not** yet reach the
+> standard expected on genuinely complex problems: the plans can be shallow, the
+> workers drift, and the synthesis sometimes misses what a single capable model
+> would have caught. Treat it as a preview to try, not as the recommended path for
+> hard tasks.
 
 For a task too big or too broad for a single pass, a **lead model orchestrates a
 team**, in two phases:

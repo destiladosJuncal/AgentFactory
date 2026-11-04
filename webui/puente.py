@@ -10,6 +10,7 @@ New code, in English, except for the strings that are shown to the user.
 """
 
 import json
+import re
 import threading
 import traceback
 from pathlib import Path
@@ -99,6 +100,53 @@ class Puente:
             self._chats[nombre] = chat
         return chat
 
+    _IMG_SRC = re.compile(r'(<img\b[^>]*?\bsrc=")([^"]+)(")', re.I)
+    _IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                 ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
+                 ".bmp": "image/bmp"}
+    _IMG_MAX = 8 * 1024 * 1024   # 8 MB por imagen
+
+    def _render_md(self, texto: str, chat) -> str:
+        """Markdown -> HTML, incrustando las imágenes LOCALES como data: base64.
+        El WebView no puede cargar file:// ni rutas relativas al workspace, así
+        que las resolvemos contra la carpeta de la conversación y las inline-amos."""
+        html = md_a_html(texto or "")
+        bases = [Path(getattr(chat, a)) for a in ("workspace_dir", "conversacion_dir")
+                 if getattr(chat, a, None)]
+
+        def _rep(mo):
+            import base64
+            pre, src, post = mo.group(1), mo.group(2), mo.group(3)
+            s = src.strip()
+            low = s.lower()
+            if low.startswith(("data:", "http://", "https://")):
+                return mo.group(0)                 # ya es embebible/remota
+            if low.startswith("file://"):
+                s = re.sub(r'^file://(localhost)?', '', s)
+            cand = Path(s)
+            destino = None
+            if cand.is_absolute() and cand.is_file():
+                destino = cand
+            else:
+                for b in bases:
+                    q = b / s
+                    if q.is_file():
+                        destino = q; break
+            if destino is None:
+                return mo.group(0)
+            try:
+                if destino.stat().st_size > self._IMG_MAX:
+                    return mo.group(0)
+                mime = self._IMG_MIME.get(destino.suffix.lower())
+                if not mime:
+                    return mo.group(0)
+                b64 = base64.b64encode(destino.read_bytes()).decode("ascii")
+                return f'{pre}data:{mime};base64,{b64}{post}'
+            except Exception:
+                return mo.group(0)
+
+        return self._IMG_SRC.sub(_rep, html)
+
     def cargar_conversacion(self, nombre: str) -> Dict[str, Any]:
         """Items de la conversación, incluidas las EJECUCIONES locales (shell,
         biblioteca, paquetes, etc.): se muestran como bloques de herramienta con
@@ -110,7 +158,7 @@ class Puente:
             rol = m.get("role")
             ts = m.get("ts", "")
             if rol == "user":
-                items.append({"tipo": "user", "ts": ts, "html": md_a_html(m.get("content") or "")})
+                items.append({"tipo": "user", "ts": ts, "html": self._render_md(m.get("content") or "", chat)})
             elif rol == "assistant":
                 for tc in (m.get("tool_calls") or []):
                     fn = tc.get("function", {})
@@ -118,7 +166,7 @@ class Puente:
                                                "args": fn.get("arguments", "")}
                 cont = (m.get("content") or "").strip()
                 if cont:
-                    items.append({"tipo": "assistant", "ts": ts, "html": md_a_html(cont),
+                    items.append({"tipo": "assistant", "ts": ts, "html": self._render_md(cont, chat),
                                   "segundos": m.get("segundos")})
             elif rol == "tool":
                 meta = meta_tool.get(m.get("tool_call_id"), {})

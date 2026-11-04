@@ -85,6 +85,7 @@ class Puente:
                 "crew": c["path"].name.startswith("crew-"),
                 "creado": c.get("creado", ""),
                 "actualizado": c.get("actualizado", c.get("creado", "")),
+                "archivada": bool(c.get("archivada", False)),
             })
         # Más recientes primero: la lista queda como un registro cronológico.
         out.sort(key=lambda x: x.get("actualizado") or "", reverse=True)
@@ -180,6 +181,7 @@ class Puente:
                 "titulo": chat.meta.get("titulo", nombre),
                 "creado": chat.meta.get("creado", ""),
                 "actualizado": chat.meta.get("actualizado", chat.meta.get("creado", "")),
+                "archivada": bool(chat.meta.get("archivada", False)),
                 "mensajes": items}
 
     def nueva_conversacion(self, titulo: str = "") -> str:
@@ -324,6 +326,22 @@ class Puente:
             "legible": formato.size(liberado),
             "ruta": str(zip_path),
         }
+
+    def archivar_conversacion(self, nombre: str, archivar: bool = True) -> Dict[str, Any]:
+        """Archiva/desarchiva: la saca de (o la devuelve a) la lista principal sin
+        borrarla. Reversible. Si la conversación está abierta en memoria, actualizo
+        su meta en caliente para que el próximo guardado no pise el flag."""
+        chat = self._chats.get(nombre)
+        if chat is not None:
+            chat.meta["archivada"] = bool(archivar)
+            try:
+                chat.meta_path.write_text(
+                    json.dumps(chat.meta, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+        elif not self.gestor.marcar_archivada(nombre, archivar):
+            return {"ok": False, "error": "no existe"}
+        return {"ok": True, "archivada": bool(archivar)}
 
     def abrir_carpeta_conversacion(self, nombre: str) -> Dict[str, Any]:
         """Abre la carpeta de la conversación en el explorador del sistema."""

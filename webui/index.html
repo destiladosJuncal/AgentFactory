@@ -307,6 +307,7 @@
           <span id="chat-fecha" class="tmeta"></span>
           <button id="chat-editar" title="Renombrar conversación" onclick="renombrarConversacion()">✏️</button>
           <button id="chat-carpeta" title="Abrir la carpeta de la conversación" onclick="abrirCarpeta()">📂 Abrir carpeta</button>
+          <button id="chat-archivar" title="Archivar: la saca de la lista sin borrarla" onclick="archivarConversacion()">📥 Archivar</button>
           <button id="chat-borrar" title="Borrar conversación" onclick="borrarConversacion()">🗑 Borrar</button>
         </div>
         <div id="trans"><p class="vacio">Elegí una conversación o creá una nueva.</p></div>
@@ -559,7 +560,7 @@
 
   // ===================== CHAT =====================
   let convActual = null, burbujaAgente = null, bufferStream = "", enjambreAbierto = false;
-  let convsCache = [], filtroConv = "";
+  let convsCache = [], filtroConv = "", archivadasAbierto = false, convActualArchivada = false;
   const corriendo = new Set();            // conversaciones con un turno en curso
   const necesitanAccion = new Set();      // conversaciones esperando una acción tuya
   const MAX_AUTO = 5;                      // auto-continuaciones por mensaje tuyo
@@ -612,8 +613,9 @@
     const cont = $("#lista"); cont.innerHTML = "";
     const q = filtroConv.trim().toLowerCase();
     const coincide = c => !q || (c.titulo || "").toLowerCase().includes(q);
-    const normales = convsCache.filter(c => !c.crew && coincide(c));
-    const enjambre = convsCache.filter(c => c.crew && coincide(c));
+    const normales = convsCache.filter(c => !c.crew && !c.archivada && coincide(c));
+    const enjambre = convsCache.filter(c => c.crew && !c.archivada && coincide(c));
+    const archivadas = convsCache.filter(c => c.archivada && coincide(c));
     for (const c of normales) cont.appendChild(filaConv(c, false));
     if (enjambre.length) {
       // El enjambre va agrupado en UN nodo con + para desplegar las
@@ -626,7 +628,18 @@
       cont.appendChild(g);
       if (abrir) for (const c of enjambre) cont.appendChild(filaConv(c, true));
     }
-    if (q && !normales.length && !enjambre.length) {
+    if (archivadas.length) {
+      // Archivadas: fuera de la vista por defecto para aligerar la barra.
+      // Se despliegan igual que el enjambre; con búsqueda activa se abren solas.
+      const abrir = archivadasAbierto || !!q;
+      const g = document.createElement("div");
+      g.className = "grupo";
+      g.textContent = (abrir ? "➖" : "➕") + " 🗄 Archivadas (" + archivadas.length + ")";
+      g.onclick = () => { archivadasAbierto = !archivadasAbierto; renderLista(); };
+      cont.appendChild(g);
+      if (abrir) for (const c of archivadas) cont.appendChild(filaConv(c, true));
+    }
+    if (q && !normales.length && !enjambre.length && !archivadas.length) {
       const v = document.createElement("div");
       v.className = "n"; v.style.padding = "10px";
       v.textContent = "Sin resultados para “" + filtroConv.trim() + "”";
@@ -639,6 +652,8 @@
     const data = await window.pywebview.api.cargar_conversacion(nombre);
     $("#chat-cab").style.display = "flex";
     $("#chat-titulo").textContent = data.titulo;
+    convActualArchivada = !!data.archivada;
+    pintarBotonArchivar();
     const fh = (data.creado || "").slice(0, 16);
     $("#chat-fecha").textContent = fh ? "· creada " + fh : "";
     $("#chat-seguir").style.display = "none"; $("#chat-aviso").textContent = "";
@@ -680,6 +695,29 @@
   async function abrirCarpeta() {
     if (!convActual) return;
     await window.pywebview.api.abrir_carpeta_conversacion(convActual);
+  }
+  function pintarBotonArchivar() {
+    const b = $("#chat-archivar"); if (!b) return;
+    b.textContent = convActualArchivada ? "📤 Desarchivar" : "📥 Archivar";
+    b.title = convActualArchivada
+      ? "Desarchivar: la devuelve a la lista principal"
+      : "Archivar: la saca de la lista sin borrarla";
+  }
+  async function archivarConversacion() {
+    if (!convActual) return;
+    const archivar = !convActualArchivada;
+    const r = await window.pywebview.api.archivar_conversacion(convActual, archivar);
+    if (!r || !r.ok) return;
+    convActualArchivada = archivar;
+    if (archivar) {
+      // Recién archivada: la sacamos de la vista para aligerar la barra.
+      $("#chat-cab").style.display = "none";
+      trans().innerHTML = '<p class="vacio">Conversación archivada. La encontrás en 🗄 Archivadas, abajo en la lista.</p>';
+      convActual = null;
+    } else {
+      pintarBotonArchivar();
+    }
+    await refrescarLista();
   }
   function detenerChat() {
     if (!convActual) return;

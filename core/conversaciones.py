@@ -103,11 +103,29 @@ class GestorConversaciones:
                 "titulo": meta.get("titulo", d.name),
                 "creado": meta.get("creado", ""),
                 "actualizado": meta.get("actualizado", meta.get("creado", "")),
+                "archivada": bool(meta.get("archivada", False)),
                 "mensajes": n_msgs,
                 "path": d
             })
 
         return sorted(conversaciones, key=lambda s: s.get("actualizado", ""), reverse=True)
+
+    def marcar_archivada(self, nombre: str, valor: bool = True) -> bool:
+        """Archiva/desarchiva una conversación: un flag en meta.json que la saca
+        de (o la devuelve a) la lista principal. No toca el historial ni la
+        carpeta, así que es reversible y no pierde nada."""
+        d = self.cargar_conversacion(nombre)
+        if d is None:
+            return False
+        meta_path = d / "meta.json"
+        try:
+            meta = json.loads(meta_path.read_text(encoding='utf-8'))
+        except Exception:
+            meta = {}
+        meta["archivada"] = bool(valor)
+        meta_path.write_text(
+            json.dumps(meta, indent=2, ensure_ascii=False), encoding='utf-8')
+        return True
 
     def crear_conversacion(self, titulo: str = "") -> Path:
         slug_base = _slugify(titulo) if titulo else time.strftime("conversacion-%Y%m%d-%H%M%S")

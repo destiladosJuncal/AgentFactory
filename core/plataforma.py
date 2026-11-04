@@ -65,6 +65,24 @@ def _icono_notificacion() -> Optional[str]:
     return None
 
 
+def lanzar_en_fondo(args, **kwargs):
+    """Popen 'fire-and-forget' que NO deja procesos zombie: un hilo daemon
+    cosecha (wait) el proceso cuando termina, sin bloquear al que llama.
+
+    Sin esto, cada Popen que no se espera queda como <defunct> hasta que el GC
+    lo junte: con notificaciones frecuentes, se acumulan. (No usamos un handler
+    global de SIGCHLD a propósito: rompería los subprocess.run de ejecución.)"""
+    import threading
+    kwargs.setdefault("stdout", subprocess.DEVNULL)
+    kwargs.setdefault("stderr", subprocess.DEVNULL)
+    try:
+        p = subprocess.Popen(args, **kwargs)
+    except Exception:
+        raise
+    threading.Thread(target=p.wait, daemon=True).start()
+    return p
+
+
 def notificar(titulo: str, texto: str, sonido: bool = True) -> Optional[str]:
     """Muestra una notificación del sistema (fire-and-forget).
 
@@ -95,7 +113,7 @@ def notificar(titulo: str, texto: str, sonido: bool = True) -> Optional[str]:
                     args += ["-appIcon", icono]
                 if sonido:
                     args += ["-sound", "Glass"]
-                subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                lanzar_en_fondo(args)
                 return None
             # Sin terminal-notifier: osascript (muestra el ícono de Script Editor).
             t = texto.replace('"', '\\"')
@@ -103,8 +121,7 @@ def notificar(titulo: str, texto: str, sonido: bool = True) -> Optional[str]:
             guion = f'display notification "{t}" with title "{tit}"'
             if sonido:
                 guion += ' sound name "Glass"'
-            subprocess.Popen(["osascript", "-e", guion],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            lanzar_en_fondo(["osascript", "-e", guion])
         elif ES_WINDOWS:
             return "notificación no implementada en Windows"
         else:
@@ -112,7 +129,7 @@ def notificar(titulo: str, texto: str, sonido: bool = True) -> Optional[str]:
             if icono:
                 args += ["-i", icono]
             args += [titulo, texto]
-            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            lanzar_en_fondo(args)
         return None
     except Exception as e:
         return f"No pude notificar: {e}"

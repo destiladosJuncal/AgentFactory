@@ -961,9 +961,10 @@ def lanzar_firefox(puerto: int) -> Dict[str, Any]:
             banderas = 0
             if plataforma.ES_WINDOWS:
                 banderas = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_GROUP
-            subprocess.Popen(
+            # lanzar_en_fondo: cosecha el proceso al cerrarse (sin zombie) y no
+            # bloquea el hilo de la UI mientras la persona navega.
+            plataforma.lanzar_en_fondo(
                 [str(firefox), "-no-remote", "-profile", str(perfil), inicio],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL, close_fds=True, creationflags=banderas)
     except subprocess.CalledProcessError as e:
         return {"error": f"Firefox no pudo abrir (open devolvió {e.returncode})."}

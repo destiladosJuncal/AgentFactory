@@ -177,3 +177,92 @@ def test_listar_agrupa_por_dominio(captura):
     entrada = next(s for s in r["sitios"] if s["sitio"] == "linkedin.com")
     assert sorted(entrada["hosts"]) == ["linkedin.com", "www.linkedin.com"]
     assert entrada["flujos"] == 2
+
+
+# --- 5. contexto_flujo_proxy: headers no-secretos INTACTOS, secretos no ------
+#
+# El agente concluyó mal una vez que "todos los headers vienen redactados" y por
+# eso no podía comparar user-agent/accept-language entre flujos. La redacción es
+# quirúrgica: solo cookies de sesión / Authorization / CSRF. Esto lo fija.
+
+@pytest.fixture
+def captura_rica(tmp_path, monkeypatch):
+    db = tmp_path / "sesion.db"
+    con = sqlite3.connect(db)
+    con.execute("""
+        CREATE TABLE flujos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL, origen TEXT, ref INTEGER,
+            metodo TEXT, esquema TEXT, host TEXT, puerto INTEGER,
+            ruta TEXT, query TEXT,
+            req_headers TEXT, req_body BLOB, req_trunc INTEGER,
+            estado INTEGER, resp_headers TEXT, resp_body BLOB, resp_trunc INTEGER,
+            resp_tipo TEXT, ms REAL
+        )""")
+    con.execute("""
+        CREATE TABLE marcas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            flujo_id INTEGER, etiqueta TEXT, nota TEXT, ts REAL
+        )""")
+    req_headers = [
+        ["User-Agent", "Mozilla/5.0 Firefox/130"],
+        ["Accept-Language", "es-AR,es;q=0.9"],
+        ["Origin", "https://prometeoapi.com"],
+        ["Referer", "https://prometeoapi.com/panel"],
+        ["Authorization", "Bearer TOKENSECRETO999"],
+        ["Cookie", "sessionid=SUPERSECRETO123456789; theme=dark"],
+    ]
+    con.execute(
+        "INSERT INTO flujos (ts, origen, metodo, esquema, host, puerto, ruta, "
+        "query, req_headers, req_body, estado, resp_headers, resp_body, resp_tipo) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (time.time(), "captura", "GET", "https", "prometeoapi.com", 443, "/api/x",
+         "", json.dumps(req_headers), b"", 200,
+         json.dumps([["Content-Type", "application/json"]]), b"{}", "application/json"))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(proxy_tool, "_db", lambda: db)
+    return db
+
+
+def test_contexto_devuelve_headers_no_secretos_intactos(captura_rica):
+    r = proxy_tool.contexto_de_flujo(1, ventana=0, redactar=True)
+    assert "error" not in r
+    hdrs = {k.lower(): v for k, v in r["flujo"]["req_headers"]}
+    # Lo que ANTES el agente creía imposible de ver:
+    assert hdrs["user-agent"] == "Mozilla/5.0 Firefox/130"
+    assert hdrs["accept-language"] == "es-AR,es;q=0.9"
+    assert hdrs["origin"] == "https://prometeoapi.com"
+    assert hdrs["referer"] == "https://prometeoapi.com/panel"
+
+
+def test_contexto_enmascara_solo_los_secretos(captura_rica):
+    r = proxy_tool.contexto_de_flujo(1, ventana=0, redactar=True)
+    hdrs = {k.lower(): v for k, v in r["flujo"]["req_headers"]}
+    # Authorization y la cookie de sesión: enmascarados.
+    assert "TOKENSECRETO999" not in hdrs["authorization"]
+    assert "SUPERSECRETO123456789" not in hdrs["cookie"]
+    # Pero la cookie no-secreta del mismo header sobrevive.
+    assert "theme=dark" in hdrs["cookie"]
+    # Y en ningún lado del contexto aparece el secreto en claro.
+    texto = json.dumps(r, ensure_ascii=False)
+    assert "TOKENSECRETO999" not in texto
+    assert "SUPERSECRETO123456789" not in texto
+
+
+def test_ver_cuerpo_flujo_apunta_a_contexto_para_headers(captura_rica):
+    # La pista va en el PROPIO resultado, donde el modelo la lee al decidir.
+    r = proxy_tool.ver_cuerpo_flujo(1)
+    assert "req_headers" not in r and "resp_headers" not in r
+    assert "contexto_flujo_proxy" in r["nota_headers"]
+
+
+def test_el_schema_dice_donde_ver_los_headers():
+    esquema = json.dumps(proxy_tool.TOOLS_SCHEMA_PROXY, ensure_ascii=False)
+    ctx = next(t for t in proxy_tool.TOOLS_SCHEMA_PROXY
+               if t["function"]["name"] == "contexto_flujo_proxy")
+    desc = ctx["function"]["description"]
+    # La tool de headers se anuncia como la que los trae, con redacción quirúrgica.
+    assert "HEADERS" in desc and "user-agent" in desc.lower()
+    # Las dos que no los traen remiten a ella.
+    assert esquema.count("contexto_flujo_proxy") >= 3

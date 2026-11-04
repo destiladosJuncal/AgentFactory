@@ -274,7 +274,13 @@ def extraer_de_captura(sitio: str = None, texto: str = None, tipo: str = None,
 
 def ver_cuerpo_flujo(flujo_id: int, max_chars: int = 4000, redactar: bool = True) -> Dict[str, Any]:
     """Cuerpo (req y resp) decodificado de UN flujo, para ver la estructura antes
-    de escribir la extracción. Headers/secretos redactados; el payload se ve."""
+    de escribir la extracción.
+
+    OJO: esta tool NO devuelve headers (solo url, status, content-type y cuerpos).
+    Que acá no haya headers NO significa que no estén disponibles: para verlos
+    —user-agent, accept-language, origin, referer, content-type del request,
+    etc., con SOLO los secretos de sesión enmascarados— usá contexto_flujo_proxy.
+    """
     ctx = contexto_de_flujo(flujo_id, ventana=0, redactar=redactar)
     if "error" in ctx:
         return ctx
@@ -295,6 +301,13 @@ def ver_cuerpo_flujo(flujo_id: int, max_chars: int = 4000, redactar: bool = True
         "resp_content_type": f.get("resp_content_type") or f.get("resp_tipo"),
         "req_body": _corta(f.get("req_body")),
         "resp_body": _corta(f.get("resp_body")),
+        # Pista en el PROPIO resultado: el modelo lee esto justo cuando está
+        # mirando el flujo y podría concluir mal que "no hay headers".
+        "nota_headers": ("Esta vista no trae headers. Para inspeccionar o comparar "
+                         "los headers del request (user-agent, accept-language, "
+                         "origin, referer, sec-ch-*, …) llamá a contexto_flujo_proxy "
+                         "con este flujo_id: devuelve los headers con solo las "
+                         "cookies de sesión / Authorization / CSRF enmascarados."),
     }
 
 
@@ -347,10 +360,16 @@ TOOLS_SCHEMA_PROXY: List[Dict[str, Any]] = [
             "description": (
                 "Trae el contexto de un flujo capturado por el proxy, por su id "
                 "(cuando la persona escribe '@flujo 983' o 'el flujo 983'). "
-                "Devuelve la ficha (método, URL, status, headers redactados, "
-                "body), una ventana temporal de la misma sesión, el grupo del "
-                "mismo endpoint (para ver si el status es anómalo) y las marcas "
-                "puestas. Las cookies de sesión y tokens vienen enmascarados."),
+                "Es la ÚNICA tool que devuelve los HEADERS del request y la "
+                "response, y es la que tenés que usar para inspeccionarlos o "
+                "comparar un flujo contra otro. La redacción es quirúrgica: SOLO "
+                "se enmascaran las cookies de sesión, Authorization/Proxy-"
+                "Authorization y CSRF/XSRF. Todo el resto pasa INTACTO: "
+                "user-agent, accept-language, accept, origin, referer, sec-ch-*, "
+                "content-type, etc. Además devuelve la ficha (método, URL, "
+                "status, body), una ventana temporal de la misma sesión, el "
+                "grupo del mismo endpoint (para ver si el status es anómalo) y "
+                "las marcas puestas."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -419,8 +438,11 @@ TOOLS_SCHEMA_PROXY: List[Dict[str, Any]] = [
                 "para procesarlos en bloque y escribir la extracción. Mismos "
                 "filtros que buscar_en_captura. Es el camino para trabajar sobre "
                 "muchas respuestas a la vez; no intentes leer la base de datos "
-                "del proxy por tu cuenta. No devuelve headers: si necesitás "
-                "razonar sobre autenticación, pedile a la persona que active la "
+                "del proxy por tu cuenta. No devuelve headers. Para ver los "
+                "headers de un request (user-agent, accept-language, origin, "
+                "referer, etc., con solo los secretos enmascarados) usá "
+                "contexto_flujo_proxy sobre un id puntual; para razonar sobre "
+                "los valores de sesión en sí, pedile a la persona que active la "
                 "opción de incluir los valores de sesión."),
             "parameters": {
                 "type": "object",
@@ -442,8 +464,10 @@ TOOLS_SCHEMA_PROXY: List[Dict[str, Any]] = [
             "name": "ver_cuerpo_flujo",
             "description": (
                 "Cuerpo (request y response) decodificado de UN flujo por id, para "
-                "entender la estructura antes de escribir la extracción. Headers y "
-                "secretos redactados; el payload se ve. Truncado a max_chars."),
+                "entender la estructura antes de escribir la extracción. El payload "
+                "se ve; truncado a max_chars. NO devuelve headers: para verlos "
+                "(user-agent, accept-language, origin, referer, …, con solo los "
+                "secretos enmascarados) usá contexto_flujo_proxy con el mismo id."),
             "parameters": {
                 "type": "object",
                 "properties": {

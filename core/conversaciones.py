@@ -26,6 +26,13 @@ from core.proyectos import AGENT_CODE_DIR
 
 CONVERSACIONES_DIR = AGENT_CODE_DIR / "_conversaciones"
 
+# Al archivar una conversación, su parte pesada (mensajes.json + workspace/) se
+# empaqueta acá DENTRO de la propia carpeta, con xz/LZMA —bastante mejor que zip
+# en texto JSON—, y se borran los originales. meta.json queda afuera, sin tocar,
+# para que el listado siga andando sin descomprimir. 'archivada' y 'comprimida'
+# van siempre juntas: archivar comprime, abrir/desarchivar restaura.
+ARCHIVO_COMPRIMIDO = "_archivado.tar.xz"
+
 
 def _slugify(texto: str) -> str:
     slug = re.sub(r'[^a-zA-Z0-9]+', '-', texto.strip().lower()).strip('-')
@@ -70,13 +77,19 @@ class GestorConversaciones:
             except Exception:
                 continue
 
+            # Si está comprimida, mensajes.json no está en disco: uso el conteo
+            # cacheado en meta al archivar, así no hace falta descomprimir para
+            # listar.
             n_msgs = 0
-            mensajes_path = d / "mensajes.json"
-            if mensajes_path.exists():
-                try:
-                    n_msgs = len(json.loads(mensajes_path.read_text(encoding='utf-8')))
-                except Exception:
-                    pass
+            if meta.get("comprimida"):
+                n_msgs = int(meta.get("mensajes_n", 0) or 0)
+            else:
+                mensajes_path = d / "mensajes.json"
+                if mensajes_path.exists():
+                    try:
+                        n_msgs = len(json.loads(mensajes_path.read_text(encoding='utf-8')))
+                    except Exception:
+                        pass
 
             # El gasto acumulado se guarda en meta.json turno a turno.
             uso = meta.get("uso_total") or {}
@@ -104,6 +117,7 @@ class GestorConversaciones:
                 "creado": meta.get("creado", ""),
                 "actualizado": meta.get("actualizado", meta.get("creado", "")),
                 "archivada": bool(meta.get("archivada", False)),
+                "comprimida": bool(meta.get("comprimida", False)),
                 "mensajes": n_msgs,
                 "path": d
             })
@@ -125,6 +139,98 @@ class GestorConversaciones:
         meta["archivada"] = bool(valor)
         meta_path.write_text(
             json.dumps(meta, indent=2, ensure_ascii=False), encoding='utf-8')
+        return True
+
+    def _actualizar_meta(self, d: Path, cambios: Dict[str, Any]) -> None:
+        """Mezcla `cambios` en meta.json (None borra la clave) sin pisar el resto."""
+        meta_path = d / "meta.json"
+        try:
+            meta = json.loads(meta_path.read_text(encoding='utf-8'))
+        except Exception:
+            meta = {}
+        for k, v in cambios.items():
+            if v is None:
+                meta.pop(k, None)
+            else:
+                meta[k] = v
+        meta_path.write_text(
+            json.dumps(meta, indent=2, ensure_ascii=False), encoding='utf-8')
+
+    @staticmethod
+    def _contar_mensajes(d: Path) -> int:
+        p = d / "mensajes.json"
+        if p.exists():
+            try:
+                return len(json.loads(p.read_text(encoding='utf-8')))
+            except Exception:
+                return 0
+        return 0
+
+    def esta_comprimida(self, nombre: str) -> bool:
+        d = self.cargar_conversacion(nombre)
+        return bool(d is not None and (d / ARCHIVO_COMPRIMIDO).exists())
+
+    def comprimir_conversacion(self, nombre: str) -> bool:
+        """Empaqueta mensajes.json + workspace/ en un .tar.xz DENTRO de la carpeta
+        y borra los originales; deja meta.json con archivada=comprimida=True y el
+        conteo de mensajes cacheado. Libera espacio pero es 100% reversible con
+        descomprimir_conversacion. Un workspace apuntado afuera (ruta propia del
+        usuario) NO se toca: solo se empaqueta el workspace por defecto."""
+        import shutil
+        import tarfile
+        d = self.cargar_conversacion(nombre)
+        if d is None:
+            return False
+        tar = d / ARCHIVO_COMPRIMIDO
+        msgs = d / "mensajes.json"
+        ws = d / "workspace"
+        n = self._contar_mensajes(d)
+        if not tar.exists():
+            tmp = d / (ARCHIVO_COMPRIMIDO + ".tmp")
+            try:
+                with tarfile.open(tmp, "w:xz") as t:
+                    if msgs.exists():
+                        t.add(msgs, arcname="mensajes.json")
+                    if ws.exists():
+                        t.add(ws, arcname="workspace")
+                tmp.replace(tar)            # publicación atómica: o está entero o no está
+            except Exception:
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+                return False
+            # Recién con el .tar.xz escrito OK, borro los originales.
+            if msgs.exists():
+                try:
+                    msgs.unlink()
+                except Exception:
+                    pass
+            if ws.exists():
+                shutil.rmtree(ws, ignore_errors=True)
+        self._actualizar_meta(d, {"archivada": True, "comprimida": True, "mensajes_n": n})
+        return True
+
+    def descomprimir_conversacion(self, nombre: str) -> bool:
+        """Restaura mensajes.json + workspace/ desde el .tar.xz y lo borra; deja
+        archivada=comprimida=False. No-op (salvo limpiar el flag) si no estaba
+        comprimida."""
+        import tarfile
+        d = self.cargar_conversacion(nombre)
+        if d is None:
+            return False
+        tar = d / ARCHIVO_COMPRIMIDO
+        if tar.exists():
+            try:
+                with tarfile.open(tar, "r:xz") as t:
+                    try:
+                        t.extractall(d, filter="data")   # py3.12+: evita rutas fuera de d
+                    except TypeError:
+                        t.extractall(d)
+                tar.unlink()
+            except Exception:
+                return False
+        self._actualizar_meta(d, {"archivada": False, "comprimida": False, "mensajes_n": None})
         return True
 
     def crear_conversacion(self, titulo: str = "") -> Path:

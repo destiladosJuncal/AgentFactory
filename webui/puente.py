@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 
 import markdown as _md
 
-from core.conversaciones import GestorConversaciones
+from core.conversaciones import GestorConversaciones, ARCHIVO_COMPRIMIDO
 from core.chat import ConversacionChat
 
 # Markdown → HTML. 'tables' is the whole point of this migration; 'fenced_code'
@@ -97,6 +97,11 @@ class Puente:
             d = self.gestor.cargar_conversacion(nombre)
             if d is None:
                 raise ValueError(f"no existe la conversación {nombre}")
+            # Abrir una conversación archivada la restaura: el Chat lee
+            # mensajes.json y workspace/, que están dentro del .tar.xz. Al
+            # descomprimir queda además desarchivada (archivada⇔comprimida).
+            if (d / ARCHIVO_COMPRIMIDO).exists():
+                self.gestor.descomprimir_conversacion(nombre)
             chat = ConversacionChat(d)
             self._chats[nombre] = chat
         return chat
@@ -266,6 +271,8 @@ class Puente:
         limite = datetime.now() - timedelta(days=max(0, int(dias)))
         out = []
         for c in self.listar_conversaciones():
+            if c.get("archivada"):
+                continue                      # ya está comprimida y fuera de la lista
             f = self._fecha_conv(c)
             if f is not None and f < limite:
                 out.append(c)
@@ -283,11 +290,13 @@ class Puente:
         return {"cantidad": len(viejas), "bytes": total, "legible": formato.size(total)}
 
     def comprimir_viejas(self, dias: int = 90) -> Dict[str, Any]:
-        """Archiva en un .zip (y saca de la lista) las conversaciones más viejas
-        que `dias` días. El zip queda en <datos>/_archivo/ como respaldo; no se
-        pierde nada, solo se libera espacio y se despeja la lista."""
+        """Empaqueta (y saca de la lista) las conversaciones más viejas que
+        `dias` días en un único .tar.xz. Usa xz/LZMA, que en texto JSON comprime
+        bastante más que el .zip DEFLATE de antes. El archivo queda en
+        <datos>/_archivo/ como respaldo; no se pierde nada, solo se libera
+        espacio y se despeja la lista."""
         import shutil
-        import zipfile
+        import tarfile
         from datetime import datetime
         from core import formato, plataforma
         viejas = self._viejas(dias)
@@ -296,21 +305,19 @@ class Puente:
         dir_archivo = self.gestor.base_dir.parent / "_archivo"
         dir_archivo.mkdir(parents=True, exist_ok=True)
         sello = datetime.now().strftime("%Y%m%d-%H%M%S")
-        zip_path = dir_archivo / f"conversaciones-{sello}.zip"
+        tar_path = dir_archivo / f"conversaciones-{sello}.tar.xz"
         liberado = 0
         archivadas = 0
         try:
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            with tarfile.open(tar_path, "w:xz") as t:
                 for c in viejas:
                     d = self.gestor.cargar_conversacion(c["nombre"])
                     if d is None:
                         continue
                     liberado += self._tam_carpeta(d)
-                    for f in d.rglob("*"):
-                        if f.is_file():
-                            z.write(f, Path(c["nombre"]) / f.relative_to(d))
+                    t.add(d, arcname=c["nombre"])
                     archivadas += 1
-            # Recién después de escribir el zip OK, borro los originales.
+            # Recién después de escribir el .tar.xz OK, borro los originales.
             for c in viejas:
                 d = self.gestor.cargar_conversacion(c["nombre"])
                 if d is not None:
@@ -324,23 +331,21 @@ class Puente:
             "cantidad": archivadas,
             "bytes": liberado,
             "legible": formato.size(liberado),
-            "ruta": str(zip_path),
+            "ruta": str(tar_path),
         }
 
     def archivar_conversacion(self, nombre: str, archivar: bool = True) -> Dict[str, Any]:
-        """Archiva/desarchiva: la saca de (o la devuelve a) la lista principal sin
-        borrarla. Reversible. Si la conversación está abierta en memoria, actualizo
-        su meta en caliente para que el próximo guardado no pise el flag."""
-        chat = self._chats.get(nombre)
-        if chat is not None:
-            chat.meta["archivada"] = bool(archivar)
-            try:
-                chat.meta_path.write_text(
-                    json.dumps(chat.meta, indent=2, ensure_ascii=False), encoding="utf-8")
-            except Exception as e:
-                return {"ok": False, "error": str(e)}
-        elif not self.gestor.marcar_archivada(nombre, archivar):
-            return {"ok": False, "error": "no existe"}
+        """Archiva/desarchiva. Archivar NO es solo un flag: empaqueta la
+        conversación (mensajes.json + workspace/) en un .tar.xz y libera el
+        espacio en disco; desarchivar la restaura. Es reversible: no se pierde
+        nada. Suelto el Chat cacheado primero, porque le vamos a mover los
+        archivos bajo los pies (y para que un guardado tardío no recree lo que
+        acabamos de comprimir)."""
+        self._chats.pop(nombre, None)
+        ok = (self.gestor.comprimir_conversacion(nombre) if archivar
+              else self.gestor.descomprimir_conversacion(nombre))
+        if not ok:
+            return {"ok": False, "error": "no existe o no se pudo comprimir"}
         return {"ok": True, "archivada": bool(archivar)}
 
     def abrir_carpeta_conversacion(self, nombre: str) -> Dict[str, Any]:

@@ -307,7 +307,7 @@
           <span id="chat-fecha" class="tmeta"></span>
           <button id="chat-editar" title="Renombrar conversación" onclick="renombrarConversacion()">✏️</button>
           <button id="chat-carpeta" title="Abrir la carpeta de la conversación" onclick="abrirCarpeta()">📂 Abrir carpeta</button>
-          <button id="chat-archivar" title="Archivar: la saca de la lista sin borrarla" onclick="archivarConversacion()">📥 Archivar</button>
+          <button id="chat-archivar" title="Archivar: la comprime (.tar.xz, libera espacio) y la saca de la lista" onclick="archivarConversacion()">📥 Archivar</button>
           <button id="chat-borrar" title="Borrar conversación" onclick="borrarConversacion()">🗑 Borrar</button>
         </div>
         <div id="trans"><p class="vacio">Elegí una conversación o creá una nueva.</p></div>
@@ -348,9 +348,10 @@
         </div>
 
         <h2 style="margin-top:30px">Comprimir conversaciones viejas</h2>
-        <p class="sub">Archiva las conversaciones más viejas que los días indicados en
-           un <code>.zip</code> (queda en <code>_archivo/</code> como respaldo) y las saca
-           de la lista. No se pierde nada: solo libera espacio y despeja la lista.</p>
+        <p class="sub">Empaqueta las conversaciones más viejas que los días indicados en
+           un <code>.tar.xz</code> (queda en <code>_archivo/</code> como respaldo) y las saca
+           de la lista. Usa xz/LZMA, que comprime bastante más que el zip de antes. No se
+           pierde nada: solo libera espacio y despeja la lista.</p>
         <div class="acciones" style="padding-left:0; align-items:center">
           <span>Más viejas que</span>
           <input id="comp-dias" type="number" min="1" value="90"
@@ -700,19 +701,26 @@
     const b = $("#chat-archivar"); if (!b) return;
     b.textContent = convActualArchivada ? "📤 Desarchivar" : "📥 Archivar";
     b.title = convActualArchivada
-      ? "Desarchivar: la devuelve a la lista principal"
-      : "Archivar: la saca de la lista sin borrarla";
+      ? "Desarchivar: la restaura y la devuelve a la lista principal"
+      : "Archivar: la comprime (.tar.xz, libera espacio) y la saca de la lista";
   }
   async function archivarConversacion() {
     if (!convActual) return;
     const archivar = !convActualArchivada;
-    const r = await window.pywebview.api.archivar_conversacion(convActual, archivar);
-    if (!r || !r.ok) return;
+    const b = $("#chat-archivar");
+    if (b) { b.disabled = true; b.textContent = archivar ? "comprimiendo…" : "restaurando…"; }
+    let r;
+    try {
+      r = await window.pywebview.api.archivar_conversacion(convActual, archivar);
+    } finally {
+      if (b) b.disabled = false;
+    }
+    if (!r || !r.ok) { pintarBotonArchivar(); return; }
     convActualArchivada = archivar;
     if (archivar) {
       // Recién archivada: la sacamos de la vista para aligerar la barra.
       $("#chat-cab").style.display = "none";
-      trans().innerHTML = '<p class="vacio">Conversación archivada. La encontrás en 🗄 Archivadas, abajo en la lista.</p>';
+      trans().innerHTML = '<p class="vacio">Conversación archivada y comprimida. La encontrás en 🗄 Archivadas, abajo en la lista; al abrirla se restaura sola.</p>';
       convActual = null;
     } else {
       pintarBotonArchivar();
@@ -1116,7 +1124,7 @@
     if (dias < 1) { est.textContent = "Poné un número de días."; est.className = "err"; return; }
     const prev = await window.pywebview.api.conversaciones_viejas(dias);
     if (!prev.cantidad) { est.textContent = "→ ninguna más vieja que eso"; est.className = ""; return; }
-    if (!confirm(`Se archivarán ${prev.cantidad} conversación(es) (${prev.legible}) en un .zip y se sacarán de la lista. El zip queda como respaldo. ¿Seguir?`)) return;
+    if (!confirm(`Se archivarán ${prev.cantidad} conversación(es) (${prev.legible}) en un .tar.xz y se sacarán de la lista. El archivo queda como respaldo. ¿Seguir?`)) return;
     $("#comp-btn").disabled = true; est.textContent = "comprimiendo…"; est.className = "";
     try {
       const r = await window.pywebview.api.comprimir_viejas(dias);

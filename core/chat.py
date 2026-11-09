@@ -24,6 +24,8 @@ from core.procesador import ejecutar_tool_procesador, TOOLS_SCHEMA_PROCESADOR
 from core.proxy_tool import ejecutar_tool_proxy, TOOLS_SCHEMA_PROXY
 from core.tarea_tool import ejecutar_tool_tarea, TOOLS_SCHEMA_TAREA
 from core.boveda import ejecutar_tool_secreto, TOOLS_SCHEMA_SECRETOS
+from core.conectores import (esquema_conectores, nombres_conectores,
+                             ejecutar_tool_conector)
 from core.redactor import redactar as _redactar_salida
 from core.ejecucion import ejecutar_tool_ejecucion, TOOLS_SCHEMA_EJECUCION
 from core.utils_tools import resumen_tool, resumen_args
@@ -443,6 +445,7 @@ class ConversacionChat:
                 + sorted(NOMBRES_TOOLS_PAQUETES)
                 + sorted(NOMBRES_TOOLS_PROXY) + sorted(NOMBRES_TOOLS_TAREA)
                 + sorted(NOMBRES_TOOLS_SECRETOS)
+                + sorted(nombres_conectores())
                 + (sorted(NOMBRES_TOOLS_PROCESADOR) if self.fraccionar else []))
 
     def _persistir(self):
@@ -500,6 +503,8 @@ class ConversacionChat:
             return ejecutar_tool_tarea(nombre, args, conversacion=self.conversacion_dir.name)
         if nombre in NOMBRES_TOOLS_SECRETOS:
             return ejecutar_tool_secreto(nombre, args)
+        if nombre in nombres_conectores():
+            return ejecutar_tool_conector(nombre, args)
         if nombre in NOMBRES_TOOLS_PAQUETES:
             # permisos: el "permitir siempre" de ESTA conversación, para que
             # instalar_paquete pueda confirmar como lo hace ejecutar_shell.
@@ -551,6 +556,7 @@ class ConversacionChat:
                      + TOOLS_SCHEMA_ITERACION + TOOLS_SCHEMA_EJECUCION
                      + TOOLS_SCHEMA_PAQUETES
                      + TOOLS_SCHEMA_PROXY + TOOLS_SCHEMA_TAREA + TOOLS_SCHEMA_SECRETOS)
+            tools = tools + esquema_conectores()   # solo los conectores configurados
             if self.fraccionar:
                 tools = tools + TOOLS_SCHEMA_PROCESADOR
         n_bib = self.biblioteca.listar().get('total', 0)

@@ -36,6 +36,9 @@ CAMPOS: List[Tuple[str, str, bool]] = [
     ("TYPESAFE_API_KEY", "Jev (TypeSafe) · API key", True),
     ("TYPESAFE_MODEL", "Jev · modelo", False),
     ("TYPESAFE_API_URL", "Jev · URL", False),
+    # -- Conectores --------------------------------------------------------
+    ("GRAFANA_URL", "Grafana · URL", False),
+    ("GRAFANA_TOKEN", "Grafana · token (service-account)", True),
 ]
 
 CLAVES_SECRETAS = {c for c, _, secreto in CAMPOS if secreto}

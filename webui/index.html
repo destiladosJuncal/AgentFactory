@@ -338,6 +338,14 @@
           <span id="cfg-estado"></span>
         </div>
 
+        <h2 style="margin-top:30px">🔌 Conectores</h2>
+        <p class="sub">Servicios que los agentes pueden usar como herramientas. Cargá las
+           credenciales de cada uno en los campos de arriba y <b>Guardá</b>; después tocá
+           <b>Probar</b>. Un conector configurado se enciende solo: sus herramientas aparecen
+           para el agente. Las acciones que <b>escriben</b> (crear, actualizar, mandar) te piden
+           confirmación.</p>
+        <div id="conectores-cards"></div>
+
         <h2 style="margin-top:30px">Distribuir</h2>
         <p class="sub">Armá un paquete para compartir. Antes de generarlo revisa que
            no viajen credenciales; si encuentra algo, no lo arma.</p>
@@ -1017,6 +1025,34 @@
     $("#cfg-estado").textContent = "";
     previewComprimir();
     cargarSecretos();
+    cargarConectores();
+  }
+
+  // ---- conectores ----
+  async function cargarConectores(){
+    const cont = $("#conectores-cards"); if (!cont) return;
+    let lista = [];
+    try { lista = await window.pywebview.api.conectores_estado(); } catch(e){ return; }
+    cont.innerHTML = "";
+    if (!lista.length){ cont.innerHTML = `<div class="n" style="padding:4px 0">No hay conectores.</div>`; return; }
+    for (const c of lista){
+      const row = document.createElement("div"); row.className = "sec-row";
+      const estado = c.configurado
+        ? `<span class="ok">● configurado</span>`
+        : `<span class="n">○ sin credenciales</span>`;
+      row.innerHTML = `<span class="sec-et">🔌 ${escapar(c.nombre)}</span>`
+        + estado
+        + `<button class="mini" ${c.configurado ? "" : "disabled"} style="margin-left:auto">Probar</button>`
+        + `<span class="conector-est n"></span>`;
+      const est = row.querySelector(".conector-est");
+      row.querySelector("button").onclick = async () => {
+        est.textContent = "probando…"; est.className = "conector-est n";
+        let r; try { r = await window.pywebview.api.conector_probar(c.id); } catch(e){ r = {ok:false, error:String(e)}; }
+        if (r && r.ok){ est.textContent = "✅ " + (r.detalle || "OK"); est.className = "conector-est ok"; }
+        else { est.textContent = "❌ " + ((r && r.error) || "falló"); est.className = "conector-est err"; }
+      };
+      cont.appendChild(row);
+    }
   }
 
   // ---- bóveda de secretos ----

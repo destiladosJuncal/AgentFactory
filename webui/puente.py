@@ -585,6 +585,24 @@ class Puente:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def conectores_estado(self) -> List[Dict[str, Any]]:
+        """Lista de conectores (Grafana, …) con si están configurados, para las
+        cards de ⚙️ Config → Conectores."""
+        from core import conectores
+        try:
+            return conectores.estado_todos()
+        except Exception:
+            return []
+
+    def conector_probar(self, cid: str) -> Dict[str, Any]:
+        """Prueba real la conexión de un conector por su id (hace una llamada al
+        servicio). Las credenciales ya quedaron en os.environ al Guardar."""
+        from core import conectores
+        try:
+            return conectores.probar((cid or "").strip())
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # Proveedores LLM: (clave interna, variable de key en el .env, etiqueta)
     _PROVEEDORES_LLM = [
         ("deepseek", "DEEPSEEK_API_KEY", "DeepSeek"),

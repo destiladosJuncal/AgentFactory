@@ -586,11 +586,21 @@ class Puente:
             return {"ok": False, "error": str(e)}
 
     def conectores_estado(self) -> List[Dict[str, Any]]:
-        """Lista de conectores (Grafana, …) con si están configurados, para las
-        cards de ⚙️ Config → Conectores."""
-        from core import conectores
+        """Conectores (Grafana, …) para la pestaña Conexiones: estado + sus campos
+        de credencial, con el valor del secreto enmascarado (igual que Config)."""
+        from core import conectores, config
         try:
-            return conectores.estado_todos()
+            valores = config.leer()
+            salida = []
+            for c in conectores.estado_todos():
+                campos = []
+                for campo in c.get("campos", []):
+                    v = valores.get(campo["clave"], "")
+                    campos.append({**campo,
+                                   "valor": config.enmascarar(v) if campo["secreto"] else v,
+                                   "tiene": bool(v)})
+                salida.append({**c, "campos": campos})
+            return salida
         except Exception:
             return []
 

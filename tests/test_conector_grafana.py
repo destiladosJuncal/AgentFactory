@@ -124,11 +124,19 @@ def test_registro_despacha_por_nombre(monkeypatch):
     assert "error" in conectores.ejecutar_tool_conector("tool_que_no_existe", {})
 
 
-def test_estado_todos_incluye_grafana(monkeypatch):
+def test_estado_todos_incluye_grafana_con_campos(monkeypatch):
     _configurar(monkeypatch)
     estado = conectores.estado_todos()
     gra = next(c for c in estado if c["id"] == "grafana")
     assert gra["nombre"] == "Grafana" and gra["configurado"] is True
+    claves = {f["clave"] for f in gra["campos"]}
+    assert claves == {"GRAFANA_URL", "GRAFANA_TOKEN"}
+    token = next(f for f in gra["campos"] if f["clave"] == "GRAFANA_TOKEN")
+    assert token["secreto"] is True
+
+
+def test_claves_conectores_lista_las_credenciales(monkeypatch):
+    assert conectores.claves_conectores() == {"GRAFANA_URL", "GRAFANA_TOKEN"}
 
 
 def test_solicitar_confirmacion_rechaza_sin_confirmador(monkeypatch):

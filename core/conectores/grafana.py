@@ -24,6 +24,12 @@ from urllib.parse import quote
 ID = "grafana"
 NOMBRE = "Grafana"
 
+# Credenciales que la pestaña Conexiones sabe editar: (clave_env, etiqueta, es_secreto).
+CONFIG_CAMPOS = [
+    ("GRAFANA_URL", "URL", False),
+    ("GRAFANA_TOKEN", "Token (service-account)", True),
+]
+
 
 # -- credenciales ------------------------------------------------------------
 

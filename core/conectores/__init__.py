@@ -75,10 +75,23 @@ def ejecutar_tool_conector(nombre: str, argumentos: dict) -> Dict[str, Any]:
 # -- para la UI de Config ----------------------------------------------------
 
 def estado_todos() -> List[Dict[str, Any]]:
-    """Lista de conectores con su estado, para pintar las cards de Config."""
-    return [{"id": c.ID, "nombre": c.NOMBRE,
-             "configurado": _seguro(c.esta_configurado, False)}
-            for c in NATIVOS]
+    """Lista de conectores con su estado y sus campos de credencial, para pintar
+    las cards de la pestaña Conexiones. Los `campos` traen clave/etiqueta/secreto;
+    el valor (enmascarado) lo completa la capa de UI."""
+    out = []
+    for c in NATIVOS:
+        campos = [{"clave": k, "etiqueta": et, "secreto": bool(s)}
+                  for k, et, s in getattr(c, "CONFIG_CAMPOS", [])]
+        out.append({"id": c.ID, "nombre": c.NOMBRE,
+                    "configurado": _seguro(c.esta_configurado, False),
+                    "campos": campos})
+    return out
+
+
+def claves_conectores() -> Set[str]:
+    """Todas las claves de .env que pertenecen a conectores (para que la pestaña
+    Config NO las muestre: viven en Conexiones)."""
+    return {k for c in NATIVOS for (k, _et, _s) in getattr(c, "CONFIG_CAMPOS", [])}
 
 
 def probar(cid: str) -> Dict[str, Any]:

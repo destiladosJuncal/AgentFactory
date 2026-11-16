@@ -282,6 +282,15 @@
   #cfg-probar { background:var(--panel); color:#333; border:1px solid #c8ccd4; }
   #cfg-estado { font-size:13px; flex-basis:100%; line-height:1.7; }
   .ok { color:var(--agente); } .err { color:var(--error); }
+  /* --- conexiones --- */
+  .conx-card { max-width:720px; border:1px solid var(--borde); border-radius:12px;
+               padding:16px 18px; margin:0 0 16px; background:var(--panel); }
+  .conx-head { display:flex; align-items:center; gap:12px; margin:0 0 14px; }
+  .conx-head .sec-et { font-weight:600; font-size:15px; }
+  .conx-card .campo label { width:150px; min-width:150px; }
+  .conx-card .acciones { margin:14px 0 0; padding-left:164px; }
+  .conx-card .conx-guardar { background:var(--usuario); color:#fff; }
+  .conx-est { font-size:13px; flex-basis:100%; line-height:1.7; }
 </style></head>
 <body>
   <nav id="rail">
@@ -290,6 +299,7 @@
     <button class="rail-b" data-tab="agentes"><span class="ic">🤝</span>Agentes</button>
     <button class="rail-b" data-tab="tareas"><span class="ic">🕒</span>Tareas</button>
     <button class="rail-b" data-tab="captura"><span class="ic">🦊</span>Captura</button>
+    <button class="rail-b" data-tab="conexiones"><span class="ic">🔌</span>Conexiones</button>
     <button class="rail-b" data-tab="config"><span class="ic">⚙️</span>Config</button>
   </nav>
 
@@ -325,6 +335,20 @@
     </section>
 
     <!-- CONFIG -->
+    <!-- CONEXIONES (conectores a servicios externos) -->
+    <section class="vista" id="vista-conexiones">
+      <div class="panel-scroll">
+        <h2>🔌 Conexiones</h2>
+        <p class="sub">Servicios externos que los agentes pueden usar como herramientas
+           (Grafana, y más en camino). Cargá las credenciales de cada uno y tocá
+           <b>Probar</b>. Un conector configurado se enciende solo: sus herramientas
+           aparecen para el agente. Las acciones que <b>escriben</b> (crear, actualizar,
+           mandar) siempre te piden confirmación. Las credenciales se guardan en tu
+           <code>.env</code>, fuera de la carpeta del código.</p>
+        <div id="conexiones-cards"></div>
+      </div>
+    </section>
+
     <section class="vista" id="vista-config">
       <div class="panel-scroll">
         <h2>Configuración</h2>
@@ -337,14 +361,6 @@
           <button id="cfg-probar" onclick="probarTodo()">Probar conexiones</button>
           <span id="cfg-estado"></span>
         </div>
-
-        <h2 style="margin-top:30px">🔌 Conectores</h2>
-        <p class="sub">Servicios que los agentes pueden usar como herramientas. Cargá las
-           credenciales de cada uno en los campos de arriba y <b>Guardá</b>; después tocá
-           <b>Probar</b>. Un conector configurado se enciende solo: sus herramientas aparecen
-           para el agente. Las acciones que <b>escriben</b> (crear, actualizar, mandar) te piden
-           confirmación.</p>
-        <div id="conectores-cards"></div>
 
         <h2 style="margin-top:30px">Distribuir</h2>
         <p class="sub">Armá un paquete para compartir. Antes de generarlo revisa que
@@ -473,6 +489,7 @@
     for (const v of document.querySelectorAll(".vista"))
       v.classList.toggle("act", v.id === "vista-" + tab);
     if (tab === "config") cargarConfig();
+    if (tab === "conexiones") cargarConexiones();
     if (tab === "captura") cargarCaptura();
     if (tab === "tareas") cargarTareas();
     if (tab === "agentes") orqRefrescarRuns();
@@ -1025,34 +1042,59 @@
     $("#cfg-estado").textContent = "";
     previewComprimir();
     cargarSecretos();
-    cargarConectores();
   }
 
-  // ---- conectores ----
-  async function cargarConectores(){
-    const cont = $("#conectores-cards"); if (!cont) return;
+  // ---- conexiones (conectores) ----
+  async function cargarConexiones(){
+    const cont = $("#conexiones-cards"); if (!cont) return;
     let lista = [];
     try { lista = await window.pywebview.api.conectores_estado(); } catch(e){ return; }
     cont.innerHTML = "";
-    if (!lista.length){ cont.innerHTML = `<div class="n" style="padding:4px 0">No hay conectores.</div>`; return; }
-    for (const c of lista){
-      const row = document.createElement("div"); row.className = "sec-row";
-      const estado = c.configurado
-        ? `<span class="ok">● configurado</span>`
-        : `<span class="n">○ sin credenciales</span>`;
-      row.innerHTML = `<span class="sec-et">🔌 ${escapar(c.nombre)}</span>`
-        + estado
-        + `<button class="mini" ${c.configurado ? "" : "disabled"} style="margin-left:auto">Probar</button>`
-        + `<span class="conector-est n"></span>`;
-      const est = row.querySelector(".conector-est");
-      row.querySelector("button").onclick = async () => {
-        est.textContent = "probando…"; est.className = "conector-est n";
-        let r; try { r = await window.pywebview.api.conector_probar(c.id); } catch(e){ r = {ok:false, error:String(e)}; }
-        if (r && r.ok){ est.textContent = "✅ " + (r.detalle || "OK"); est.className = "conector-est ok"; }
-        else { est.textContent = "❌ " + ((r && r.error) || "falló"); est.className = "conector-est err"; }
-      };
-      cont.appendChild(row);
+    if (!lista.length){ cont.innerHTML = `<div class="n" style="padding:4px 0">No hay conectores todavía.</div>`; return; }
+    for (const c of lista) cont.appendChild(cardConexion(c));
+  }
+
+  function cardConexion(c){
+    const card = document.createElement("div"); card.className = "conx-card";
+    const badge = c.configurado
+      ? `<span class="ok">● configurado</span>`
+      : `<span class="n">○ sin credenciales</span>`;
+    let campos = "";
+    for (const f of (c.campos || [])){
+      const ph = f.secreto ? (f.tiene ? f.valor + "  (dejá en blanco para conservar)" : "—") : "";
+      const val = f.secreto ? "" : escapAttr(f.valor || "");
+      campos += `<div class="campo"><label>${escapar(f.etiqueta)}</label>`
+        + `<input data-clave="${f.clave}" type="${f.secreto ? "password" : "text"}" `
+        + `value="${val}" placeholder="${escapAttr(ph)}"></div>`;
     }
+    card.innerHTML = `<div class="conx-head"><span class="sec-et">🔌 ${escapar(c.nombre)}</span>${badge}</div>`
+      + campos
+      + `<div class="acciones" style="padding-left:0; align-items:center">`
+      + `<button class="conx-guardar">Guardar</button>`
+      + `<button class="conx-probar" ${c.configurado ? "" : "disabled"} style="background:var(--panel);border:1px solid #c8ccd4">Probar</button>`
+      + `<span class="conx-est n"></span></div>`;
+
+    const est = card.querySelector(".conx-est");
+    card.querySelector(".conx-guardar").onclick = async () => {
+      const cambios = {};
+      for (const inp of card.querySelectorAll("input[data-clave]")){
+        // Secreto en blanco = conservar el guardado (no lo pisamos).
+        if (inp.type === "password" && inp.value === "") continue;
+        cambios[inp.dataset.clave] = inp.value;
+      }
+      if (!Object.keys(cambios).length){ est.textContent = "nada que guardar"; est.className = "conx-est n"; return; }
+      est.textContent = "guardando…"; est.className = "conx-est n";
+      let r; try { r = await window.pywebview.api.guardar_config(cambios); } catch(e){ r = {ok:false, error:String(e)}; }
+      if (r && r.ok){ est.textContent = "✅ guardado"; est.className = "conx-est ok"; cargarConexiones(); }
+      else { est.textContent = "❌ " + ((r && r.error) || "falló"); est.className = "conx-est err"; }
+    };
+    card.querySelector(".conx-probar").onclick = async () => {
+      est.textContent = "probando…"; est.className = "conx-est n";
+      let r; try { r = await window.pywebview.api.conector_probar(c.id); } catch(e){ r = {ok:false, error:String(e)}; }
+      if (r && r.ok){ est.textContent = "✅ " + (r.detalle || "OK"); est.className = "conx-est ok"; }
+      else { est.textContent = "❌ " + ((r && r.error) || "falló"); est.className = "conx-est err"; }
+    };
+    return card;
   }
 
   // ---- bóveda de secretos ----

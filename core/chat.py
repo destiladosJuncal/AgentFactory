@@ -52,10 +52,24 @@ MAX_MENSAJES_CONTEXTO = None  # cuántos mensajes recientes se mandan al modelo;
 # Vueltas de herramientas por turno. Solo se descuentan las vueltas en las que
 # el modelo consiguió ALGO: si toda una vuelta se fue en errores de la propia
 # herramienta (comando no permitido, timeout, argumentos cortados), no se cobra
-# — no es trabajo del modelo. MAX_VUELTAS_ABSOLUTO es el techo duro que evita
-# que un modelo que falla siempre gire para siempre.
-MAX_ITERACIONES_TOOLS = 12
-MAX_VUELTAS_ABSOLUTO = MAX_ITERACIONES_TOOLS + 4
+# — no es trabajo del modelo. El techo duro (max_vueltas + 4) evita que un
+# modelo que falla siempre gire para siempre.
+#
+# El número es CONFIGURABLE desde la pestaña Config (variable AGENTE_MAX_VUELTAS)
+# y se lee por turno, así editarlo aplica en el acto —también a los workers del
+# enjambre, que reusan este mismo loop—. Este valor es el default si no se tocó.
+MAX_ITERACIONES_TOOLS = 20
+
+
+def _max_vueltas() -> int:
+    """Tope de vueltas de herramientas por mensaje, configurable con
+    AGENTE_MAX_VUELTAS. Acotado a un rango sano (3–100) para no cortar de más
+    ni desbocar el costo si se pone un número absurdo."""
+    try:
+        n = int((os.getenv("AGENTE_MAX_VUELTAS") or "").strip() or MAX_ITERACIONES_TOOLS)
+    except (ValueError, TypeError):
+        n = MAX_ITERACIONES_TOOLS
+    return max(3, min(n, 100))
 
 # Errores que son culpa del andamiaje, no del razonamiento del modelo.
 SENALES_FALLA_DE_HERRAMIENTA = (
@@ -144,14 +158,18 @@ SYSTEM_PROMPT_BASE = (
     "que pidió —JSON, PDF, planilla— jerarquizado por el criterio que indique, "
     "guardándolo en el workspace. El proxy le enseña la estructura y los flujos; "
     "vos accionás sobre eso. Solo re-disparás requests nuevas si pide datos que "
-    "NO navegó.\n\n"
-    f"Tenés hasta {MAX_ITERACIONES_TOOLS} vueltas de herramientas por cada "
-    "mensaje de la persona (podés pedir varias herramientas en la misma "
-    "vuelta, y eso cuenta como una sola). Administralas: no repitas una "
-    "consulta cuyo resultado ya tenés. Cuando te avise que te queda la última, "
-    "dejá de usar herramientas y respondé con lo que hayas juntado hasta ahí, "
-    "aunque sea parcial — una respuesta incompleta siempre le sirve más a la "
-    "persona que ninguna."
+    "NO navegó."
+)
+
+# El tope de vueltas se inyecta por turno con el valor configurado (AGENTE_MAX_VUELTAS),
+# así el prompt le dice al modelo el número REAL y no uno fijo.
+BLOQUE_VUELTAS = (
+    "Tenés hasta {n} vueltas de herramientas por cada mensaje de la persona "
+    "(podés pedir varias herramientas en la misma vuelta, y eso cuenta como una "
+    "sola). Administralas: no repitas una consulta cuyo resultado ya tenés. "
+    "Cuando te avise que te queda la última, dejá de usar herramientas y "
+    "respondé con lo que hayas juntado hasta ahí, aunque sea parcial — una "
+    "respuesta incompleta siempre le sirve más a la persona que ninguna."
 )
 
 # Solo se agrega al prompt cuando la conversación tiene 'Fraccionar' tildado.
@@ -304,6 +322,10 @@ class ConversacionChat:
         self.biblioteca = Biblioteca()
 
         self.tools_habilitadas = os.getenv('AGENTE_TOOLS_ENABLED', '1') != '0'
+        # Tope de vueltas de herramientas por mensaje (configurable). Se refresca
+        # por turno en enviar(), así editar el valor aplica a las conversaciones
+        # ya abiertas sin reiniciar.
+        self.max_vueltas = _max_vueltas()
         self.cancelado = False   # lo levanta el botón Detener de la UI
 
         # Permisos de 'permitir siempre' de ESTA conversación. Aprobar `rm`
@@ -528,6 +550,9 @@ class ConversacionChat:
 
         self.cancelado = False
         _inicio_turno = time.time()
+        # Releer el tope por turno: si lo editaste en Config, aplica ya en el
+        # próximo mensaje aunque la conversación estuviera abierta.
+        self.max_vueltas = _max_vueltas()
 
         def _evento(d):
             if al_evento:
@@ -565,6 +590,7 @@ class ConversacionChat:
         if self.fraccionar:
             system_content += "\n\n" + BLOQUE_FRACCIONAR
         if self.tools_habilitadas:
+            system_content += "\n\n" + BLOQUE_VUELTAS.format(n=self.max_vueltas)
             system_content += (
                 "\n\nPara instalar bibliotecas de Python usá SIEMPRE la tool "
                 "'instalar_paquete'. NO corras 'pip install' por shell ni armes un "
@@ -598,7 +624,7 @@ class ConversacionChat:
             vueltas_utiles = 0
             vueltas_totales = 0
 
-            while vueltas_utiles < MAX_ITERACIONES_TOOLS and vueltas_totales < MAX_VUELTAS_ABSOLUTO:
+            while vueltas_utiles < self.max_vueltas and vueltas_totales < self.max_vueltas + 4:
                 if self.cancelado:
                     return self._cerrar_cancelado()
                 vueltas_totales += 1
@@ -687,7 +713,7 @@ class ConversacionChat:
 
                     # Aviso de cierre, pegado al último resultado para que el
                     # modelo lo vea sí o sí en la próxima llamada.
-                    if vueltas_utiles == MAX_ITERACIONES_TOOLS - 1 and contexto[-1]["role"] == "tool":
+                    if vueltas_utiles == self.max_vueltas - 1 and contexto[-1]["role"] == "tool":
                         contexto[-1]["content"] += AVISO_ULTIMA_VUELTA
 
                     self._persistir()

@@ -21,6 +21,7 @@ from core.rutas import PLANTILLA_ENV, proteger, ruta_env
 # Claves que la UI sabe editar. (clave, etiqueta, es_secreto)
 CAMPOS: List[Tuple[str, str, bool]] = [
     ("AGENTE_PROVEEDOR", "Proveedor por defecto", False),
+    ("AGENTE_MAX_VUELTAS", "Vueltas de herramientas por mensaje", False),
     ("DEEPSEEK_API_KEY", "DeepSeek · API key", True),
     ("DEEPSEEK_MODEL", "DeepSeek · modelo", False),
     ("DEEPSEEK_API_URL", "DeepSeek · URL", False),
@@ -48,6 +49,7 @@ CLAVES_SECRETAS = {c for c, _, secreto in CAMPOS if secreto}
 # futuro cambia el modelo/endpoint). Mantener el default en sync con
 # core/classifier.py (TYPESAFE_MODEL_DEFAULT / TYPESAFE_URL_DEFAULT).
 SUGERENCIAS: Dict[str, Dict[str, Any]] = {
+    "AGENTE_MAX_VUELTAS": {"default": "20", "opciones": ["12", "20", "30", "40", "60"]},
     "TYPESAFE_MODEL": {"default": "jev-latest",
                        "opciones": ["jev-latest", "jev-preview", "jev-1.13"]},
     "TYPESAFE_API_URL": {"default": "https://api.typesafe.ai/v1/systemone"},

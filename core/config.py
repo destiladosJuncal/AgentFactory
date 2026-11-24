@@ -21,7 +21,7 @@ from core.rutas import PLANTILLA_ENV, proteger, ruta_env
 # Claves que la UI sabe editar. (clave, etiqueta, es_secreto)
 CAMPOS: List[Tuple[str, str, bool]] = [
     ("AGENTE_PROVEEDOR", "Proveedor por defecto", False),
-    ("AGENTE_MAX_VUELTAS", "Vueltas de herramientas por mensaje", False),
+    ("AGENTE_MAX_VUELTAS", "Iteraciones / vueltas de herramientas por mensaje", False),
     ("DEEPSEEK_API_KEY", "DeepSeek · API key", True),
     ("DEEPSEEK_MODEL", "DeepSeek · modelo", False),
     ("DEEPSEEK_API_URL", "DeepSeek · URL", False),

@@ -429,10 +429,14 @@ def _cwd(directorio: Optional[str], por_defecto: Path) -> Tuple[Optional[Path], 
     return ruta, None
 
 
-def _preparar_secretos(texto: str) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """Si `texto` usa {{secreto:ETIQUETA}}, confirma el uso (siempre) y sustituye
-    los valores reales SOLO para la ejecución. Devuelve (texto_real, error|None).
-    El `texto` original (con placeholders) es el que se loguea/guarda."""
+def _preparar_secretos(texto: str, permisos: Optional[set] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Si `texto` usa {{secreto:ETIQUETA}}, confirma el uso y sustituye los valores
+    reales SOLO para la ejecución. Devuelve (texto_real, error|None). El `texto`
+    original (con placeholders) es el que se loguea/guarda.
+
+    El "permitir siempre" se recuerda POR SECRETO en el set `permisos` (el mismo de
+    la conversación que usa el shell): si ya autorizaste siempre todos los secretos
+    de este texto, no se vuelve a preguntar."""
     from core import boveda
     etiquetas = boveda.etiquetas_en(texto)
     if not etiquetas:
@@ -442,6 +446,14 @@ def _preparar_secretos(texto: str) -> Tuple[str, Optional[Dict[str, Any]]]:
         return texto, {"error": (f"Secreto(s) no cargado(s): {', '.join(faltan)}. "
                                  f"Pedilos con la herramienta pedir_secreto antes de usarlos."),
                        "requeria_confirmacion": True}
+
+    aprobadas = _APROBADAS_SIEMPRE if permisos is None else permisos
+    claves = [f"secreto:{e}" for e in etiquetas]
+    # Ya diste "permitir siempre" a TODOS los secretos de este texto: no re-preguntar.
+    if all(c in aprobadas for c in claves):
+        real, _u, _f = boveda.sustituir(texto)
+        return real, None
+
     if CONFIRMADOR is None:
         return texto, {"error": "Este modo no puede confirmar el uso de secretos; no ejecuto."}
     detalle = (f"El comando usa el/los secreto(s): {', '.join(etiquetas)}.\n\n{texto}\n\n"
@@ -450,6 +462,9 @@ def _preparar_secretos(texto: str) -> Tuple[str, Optional[Dict[str, Any]]]:
     decision = CONFIRMADOR(f"usa el/los secreto(s): {', '.join(etiquetas)}", detalle, "secreto")
     if decision not in ("permitir", "siempre"):
         return texto, {"error": "No autorizaste el uso del secreto."}
+    if decision == "siempre":
+        # Recordar por secreto, para no volver a preguntar por estos en la conversación.
+        aprobadas.update(claves)
     real, _usadas, _faltan = boveda.sustituir(texto)
     return real, None
 
@@ -503,7 +518,7 @@ def ejecutar_shell(comando: str, directorio: str = "", timeout: Any = TIMEOUT_DE
         # En POSIX se sigue forzando bash y no $SHELL: el schema de la tool le
         # promete bash al modelo, y en una Mac moderna $SHELL es zsh.
         extra = {} if plataforma.ES_WINDOWS else {"executable": "/bin/bash"}
-        comando_real, err_sec = _preparar_secretos(comando)
+        comando_real, err_sec = _preparar_secretos(comando, permisos)
         if err_sec:
             return err_sec
         proc = subprocess.run(
@@ -537,7 +552,7 @@ def ejecutar_python(codigo: str, directorio: str = "", timeout: Any = TIMEOUT_DE
     if bloqueo:
         return bloqueo
 
-    codigo_real, err_sec = _preparar_secretos(codigo)
+    codigo_real, err_sec = _preparar_secretos(codigo, permisos)
     if err_sec:
         return err_sec
     with tempfile.TemporaryDirectory(prefix="ejec_py_") as tmp:
